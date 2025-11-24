@@ -236,9 +236,14 @@ workflow PROTEIN_DESIGN {
             // Get NPZ and CIF pairs from the conversion step
             ch_ipsae_protenix = CONVERT_PROTENIX_TO_NPZ.out.npz_with_cif
                 .map { meta, npz_file, cif_file ->
-                    // Add source tracking
-                    def ipsae_meta = meta.clone()
-                    ipsae_meta.source = "protenix"
+                    // Add source tracking - create new meta map explicitly to avoid concurrent modification
+                    def ipsae_meta = [
+                        id: meta.id,
+                        parent_id: meta.parent_id,
+                        mpnn_parent_id: meta.mpnn_parent_id,
+                        model_id: meta.model_id,
+                        source: "protenix"
+                    ]
                     [ipsae_meta, npz_file, cif_file]
                 }
             

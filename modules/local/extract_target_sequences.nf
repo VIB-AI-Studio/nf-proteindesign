@@ -19,6 +19,7 @@ process EXTRACT_TARGET_SEQUENCES {
     import sys
     import json
     from pathlib import Path
+    import Bio
     from Bio import PDB
     from Bio.PDB import PDBIO, MMCIFParser, PDBParser
     
@@ -109,7 +110,7 @@ process EXTRACT_TARGET_SEQUENCES {
     with open("versions.yml", "w") as f:
         f.write("\\"${task.process}\\":\\n")
         f.write("    python: " + sys.version.split()[0] + "\\n")
-        f.write("    biopython: " + PDB.__version__ + "\\n")
+        f.write("    biopython: " + Bio.__version__ + "\\n")
     """
 
     stub:

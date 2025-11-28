@@ -1,2 +1,2 @@
 sample_id,design_yaml,structure_files,protocol,num_designs,budget,reuse,target_msa
-2vsm_peptide_binder,assets/test_data/2VSM_peptide_design.yaml,assets/test_data/2VSM.cif,peptide-anything,5,2,,
+2vsm_peptide_binder,assets/test_data/2VSM_peptide_design.yaml,assets/test_data/2VSM.cif,peptide-anything,3,2,,

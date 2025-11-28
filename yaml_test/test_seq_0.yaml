@@ -1,0 +1,10 @@
+sequences:
+- protein:
+    id: BINDER
+    msa: empty
+    sequence: GHHHHHHHHHHHHHHHHHH
+- protein:
+    id: TARGET
+    msa: /home/florian/nf-proteindesign-2025/assets/test_data/nipah_glycoprotein_msa_Uniref30_2302.a3m
+    sequence: AAA
+version: 1

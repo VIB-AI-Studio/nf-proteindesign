@@ -64,8 +64,6 @@ workflow PROTEIN_DESIGN {
                     [design_meta, pdb_file]
                 }
             }
-
-        ch_pdb_per_design.view()
         
         // Run ProteinMPNN on each design individually (parallel execution per budget design)
         PROTEINMPNN_OPTIMIZE(ch_pdb_per_design)

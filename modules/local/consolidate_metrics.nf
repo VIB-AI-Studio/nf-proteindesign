@@ -10,6 +10,7 @@ process CONSOLIDATE_METRICS {
     path ipsae_files, stageAs: 'ipsae/*'       // Collection of ipSAE score files
     path prodigy_files, stageAs: 'prodigy/*'   // Collection of Prodigy result files
     path foldseek_files, stageAs: 'foldseek/*' // Collection of Foldseek summary files
+    path sequence_files, stageAs: 'sequences/*' // Collection of binder sequence files
     path consolidate_script
 
     output:
@@ -20,6 +21,7 @@ process CONSOLIDATE_METRICS {
     script:
     def pae_cutoff = params.ipsae_pae_cutoff ?: 10
     def dist_cutoff = params.ipsae_dist_cutoff ?: 10
+    def seq_dir_flag = sequence_files.name != 'NO_SEQUENCE_FILES' ? '--sequence_dir "sequences"' : ''
 
     """
     # Make script executable
@@ -35,12 +37,16 @@ process CONSOLIDATE_METRICS {
     echo "=== Staged Foldseek files ==="
     ls -la foldseek/ 2>/dev/null || echo "No foldseek directory"
     echo ""
+    echo "=== Staged Sequence files ==="
+    ls -la sequences/ 2>/dev/null || echo "No sequences directory"
+    echo ""
 
     # Run consolidation script with staged subdirectories
     python ${consolidate_script} \\
         --ipsae_dir "ipsae" \\
         --prodigy_dir "prodigy" \\
         --foldseek_dir "foldseek" \\
+        ${seq_dir_flag} \\
         --output_html design_metrics_report.html \\
         --output_csv design_metrics_summary.csv \\
         --title "Protein Design Metrics Report" \\

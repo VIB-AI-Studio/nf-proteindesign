@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Consolidate protein design metrics from ipSAE, Prodigy, and Foldseek outputs.
+Consolidate protein design metrics from ipSAE, Prodigy, Foldseek, and sequence outputs.
 
-Generates an interactive HTML report with a searchable, filterable table.
+Generates an interactive HTML report with AG Grid for searching/filtering.
 
 This script reads from staged files in a flat directory structure.
 """
@@ -12,6 +12,7 @@ import csv
 import os
 import sys
 import re
+import json
 from pathlib import Path
 from collections import defaultdict
 
@@ -117,8 +118,8 @@ def parse_foldseek_summary(foldseek_file):
                     fident = float(parts[2])
                     alnlen = int(parts[3])
 
-                    # Calculate distance
-                    distance = alnlen * (1.0 - fident)
+                    # Calculate distance (AA differences)
+                    distance = round(alnlen * (1.0 - fident))
 
                     if distance < best_distance:
                         best_distance = distance
@@ -127,12 +128,78 @@ def parse_foldseek_summary(foldseek_file):
                     continue
 
         if best_target:
-            return best_target, round(best_distance, 1)
+            return best_target, int(best_distance)
 
     except Exception as e:
         print(f"Warning: Could not parse Foldseek file {foldseek_file}: {e}", file=sys.stderr)
 
     return None, None
+
+
+def parse_afdb_id(foldseek_target):
+    """
+    Parse AlphaFold DB ID from Foldseek target name.
+
+    Input formats:
+        - AF-P12345-F1-model_v4
+        - AF-Q9Y6K9-F1-model_v4
+
+    Returns tuple: (uniprot_id, afdb_url) or (None, None)
+    """
+    if not foldseek_target:
+        return None, None
+
+    # Pattern: AF-{UniProt}-F{fragment}-model_v{version}
+    match = re.match(r'^AF-([A-Z0-9]+)-F\d+-model_v\d+$', foldseek_target)
+    if match:
+        uniprot_id = match.group(1)
+        afdb_url = f"https://alphafold.ebi.ac.uk/entry/{uniprot_id}"
+        return uniprot_id, afdb_url
+
+    return None, None
+
+
+def parse_sequence_file(seq_file):
+    """
+    Parse FASTA sequence file and extract the binder sequence.
+
+    Returns the amino acid sequence string or None.
+    """
+    if not os.path.exists(seq_file):
+        return None
+
+    try:
+        sequences = []
+        current_header = None
+        current_seq = []
+
+        with open(seq_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith('>'):
+                    if current_header and current_seq:
+                        sequences.append((current_header, ''.join(current_seq)))
+                    current_header = line
+                    current_seq = []
+                else:
+                    current_seq.append(line)
+
+            if current_header and current_seq:
+                sequences.append((current_header, ''.join(current_seq)))
+
+        if not sequences:
+            return None
+
+        # Return the binder sequence (always the shortest one)
+        # The binder is the designed smaller protein
+        return min(sequences, key=lambda x: len(x[1]))[1]
+
+    except Exception as e:
+        print(f"Warning: Could not parse sequence file {seq_file}: {e}", file=sys.stderr)
+
+    return None
 
 
 def extract_design_id_from_ipsae(filename):
@@ -169,7 +236,21 @@ def extract_design_id_from_foldseek(filename):
     return base.replace('_foldseek_summary', '').replace('_foldseek_results', '')
 
 
-def collect_metrics_from_dirs(ipsae_dir, prodigy_dir, foldseek_dir, ipsae_cutoffs="10_10"):
+def extract_design_id_from_sequence(filename):
+    """
+    Extract design ID from sequence filename.
+
+    Example: 2vsm_r1_s0_binder_sequence.fa -> 2vsm_r1_s0
+    """
+    base = Path(filename).stem
+    # Remove common suffixes
+    base = re.sub(r'_binder_sequence$', '', base)
+    base = re.sub(r'_sequence$', '', base)
+    base = re.sub(r'_seq$', '', base)
+    return base
+
+
+def collect_metrics_from_dirs(ipsae_dir, prodigy_dir, foldseek_dir, sequence_dir=None, ipsae_cutoffs="10_10"):
     """
     Collect metrics from staged files in separate directories.
 
@@ -177,6 +258,7 @@ def collect_metrics_from_dirs(ipsae_dir, prodigy_dir, foldseek_dir, ipsae_cutoff
         ipsae_dir: Directory containing ipSAE score files
         prodigy_dir: Directory containing Prodigy result files
         foldseek_dir: Directory containing Foldseek summary files
+        sequence_dir: Directory containing sequence FASTA files
         ipsae_cutoffs: Suffix for ipSAE files (e.g., "10_10")
 
     Returns a dict mapping design_id -> metrics dict
@@ -234,30 +316,61 @@ def collect_metrics_from_dirs(ipsae_dir, prodigy_dir, foldseek_dir, ipsae_cutoff
             if target is not None:
                 metrics[design_id]['foldseek_target'] = target
                 metrics[design_id]['foldseek_distance'] = distance
-                print(f"  Foldseek [{design_id}]: {target} (dist={distance})")
+                # Parse AFDB ID
+                uniprot_id, afdb_url = parse_afdb_id(target)
+                if uniprot_id:
+                    metrics[design_id]['afdb_id'] = uniprot_id
+                    metrics[design_id]['afdb_url'] = afdb_url
+                print(f"  Foldseek [{design_id}]: {target} (dist={distance}, uniprot={uniprot_id})")
     else:
         print(f"Foldseek directory not found: {foldseek_dir}")
+
+    # 4. Parse sequence files (pattern: *.fa or *.fasta)
+    if sequence_dir:
+        sequence_path = Path(sequence_dir)
+        if sequence_path.exists():
+            seq_files = list(sequence_path.glob('*.fa')) + list(sequence_path.glob('*.fasta'))
+            print(f"Found {len(seq_files)} sequence files in {sequence_dir}")
+
+            for seq_file in seq_files:
+                design_id = extract_design_id_from_sequence(seq_file.name)
+                sequence = parse_sequence_file(str(seq_file))
+
+                if sequence:
+                    metrics[design_id]['sequence'] = sequence
+                    metrics[design_id]['aa_length'] = len(sequence)
+                    print(f"  Sequence [{design_id}]: {len(sequence)} AA")
+        else:
+            print(f"Sequence directory not found: {sequence_dir}")
 
     return metrics
 
 
 def generate_html_report(metrics, output_file, title="Protein Design Metrics Report"):
     """
-    Generate an interactive HTML report with DataTables for searching/filtering.
+    Generate an interactive HTML report with AG Grid for searching/filtering.
     """
     # Convert metrics dict to sorted list
     rows = []
     for design_id, data in sorted(metrics.items()):
-        rows.append({
+        row = {
             'design_id': design_id,
             'ipsae': data.get('ipsae'),
             'binding_affinity': data.get('binding_affinity'),
             'foldseek_target': data.get('foldseek_target'),
-            'foldseek_distance': data.get('foldseek_distance')
-        })
+            'foldseek_distance': data.get('foldseek_distance'),
+            'afdb_id': data.get('afdb_id'),
+            'afdb_url': data.get('afdb_url'),
+            'sequence': data.get('sequence'),
+            'aa_length': data.get('aa_length')
+        }
+        rows.append(row)
 
-    # Sort by ipSAE descending (higher = better interface prediction)
-    rows.sort(key=lambda x: x.get('ipsae') or 0, reverse=True)
+    # Sort by ipSAE ascending (lower = better interface prediction)
+    rows.sort(key=lambda x: x.get('ipsae') or float('inf'))
+
+    # Convert rows to JSON for AG Grid
+    rows_json = json.dumps(rows)
 
     html = f'''<!DOCTYPE html>
 <html lang="en">
@@ -266,83 +379,285 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title}</title>
 
-    <!-- DataTables CSS -->
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
-    <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.dataTables.min.css">
+    <!-- AG Grid CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-grid.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-theme-alpine.css">
 
     <style>
+        * {{
+            box-sizing: border-box;
+        }}
+
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            margin: 20px;
-            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f2f5;
         }}
 
         .container {{
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
             background: white;
             padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         }}
 
         h1 {{
-            color: #333;
-            margin-bottom: 10px;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+            font-size: 1.8rem;
+            font-weight: 600;
         }}
 
         .summary {{
             color: #666;
-            margin-bottom: 25px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 5px;
+            margin-bottom: 24px;
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            color: white;
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+        }}
+
+        .summary-item {{
+            display: flex;
+            flex-direction: column;
+        }}
+
+        .summary-label {{
+            font-size: 0.85rem;
+            opacity: 0.9;
+        }}
+
+        .summary-value {{
+            font-size: 1.5rem;
+            font-weight: 600;
         }}
 
         .metric-info {{
             font-size: 0.9em;
             color: #666;
             margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
         }}
 
-        .metric-info dt {{
-            font-weight: bold;
-            color: #333;
+        .metric-card {{
+            background: #f8f9fa;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
         }}
 
-        .metric-info dd {{
-            margin-left: 20px;
-            margin-bottom: 8px;
+        .metric-card dt {{
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 4px;
         }}
 
-        table.dataTable {{
-            width: 100% !important;
+        .metric-card dd {{
+            margin: 0;
+            color: #666;
+            font-size: 0.85rem;
         }}
 
-        table.dataTable thead th {{
-            background-color: #4a90d9;
+        .toolbar {{
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }}
+
+        .search-box {{
+            flex: 1;
+            min-width: 200px;
+            max-width: 400px;
+        }}
+
+        .search-box input {{
+            width: 100%;
+            padding: 10px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            transition: border-color 0.2s;
+        }}
+
+        .search-box input:focus {{
+            outline: none;
+            border-color: #667eea;
+        }}
+
+        .btn {{
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }}
+
+        .btn-primary {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }}
 
-        table.dataTable tbody tr:hover {{
-            background-color: #e8f4f8 !important;
+        .btn-primary:hover {{
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }}
+
+        .btn-secondary {{
+            background: #f0f0f0;
+            color: #333;
+        }}
+
+        .btn-secondary:hover {{
+            background: #e0e0e0;
+        }}
+
+        #metricsGrid {{
+            height: 600px;
+            width: 100%;
+        }}
+
+        .ag-theme-alpine {{
+            --ag-header-background-color: #667eea;
+            --ag-header-foreground-color: white;
+            --ag-row-hover-color: #f0f4ff;
+            --ag-selected-row-background-color: #e8f0fe;
+            --ag-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }}
+
+        .ag-theme-alpine .ag-header-cell {{
+            font-weight: 600;
         }}
 
         .good-value {{
             color: #28a745;
-            font-weight: bold;
+            font-weight: 600;
         }}
 
-        .medium-value {{
+        .warning-value {{
             color: #ffc107;
         }}
 
-        .highlight-row {{
-            background-color: #d4edda !important;
+        .afdb-link {{
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
         }}
 
-        .dt-buttons {{
-            margin-bottom: 15px;
+        .afdb-link:hover {{
+            text-decoration: underline;
+        }}
+
+        .sequence-cell {{
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }}
+
+        .sequence-collapsed {{
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            background: #f0f0f0;
+            padding: 4px 8px;
+            border-radius: 4px;
+            display: inline-block;
+        }}
+
+        .sequence-collapsed:hover {{
+            background: #e0e0e0;
+        }}
+
+        .sequence-expanded {{
+            word-break: break-all;
+            white-space: pre-wrap;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #e0e0e0;
+        }}
+
+        .expand-icon {{
+            margin-left: 4px;
+            font-size: 0.7rem;
+            opacity: 0.6;
+        }}
+
+        /* Modal for sequence */
+        .modal {{
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }}
+
+        .modal-content {{
+            background-color: white;
+            margin: 10% auto;
+            padding: 24px;
+            border-radius: 12px;
+            width: 80%;
+            max-width: 800px;
+            max-height: 70vh;
+            overflow-y: auto;
+        }}
+
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }}
+
+        .modal-header h3 {{
+            margin: 0;
+            color: #1a1a2e;
+        }}
+
+        .close-btn {{
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #666;
+        }}
+
+        .close-btn:hover {{
+            color: #333;
+        }}
+
+        .sequence-display {{
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.9rem;
+            word-break: break-all;
+            white-space: pre-wrap;
+            background: #f8f9fa;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            line-height: 1.6;
+        }}
+
+        .copy-btn {{
+            margin-top: 12px;
         }}
     </style>
 </head>
@@ -351,97 +666,269 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
         <h1>{title}</h1>
 
         <div class="summary">
-            <strong>Total designs evaluated:</strong> {len(rows)}
+            <div class="summary-item">
+                <span class="summary-label">Total Designs</span>
+                <span class="summary-value">{len(rows)}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">With Sequences</span>
+                <span class="summary-value">{sum(1 for r in rows if r.get('sequence'))}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">AFDB Matches</span>
+                <span class="summary-value">{sum(1 for r in rows if r.get('afdb_id'))}</span>
+            </div>
         </div>
 
         <div class="metric-info">
-            <dl>
-                <dt>ipSAE (Interface Predicted Structural Alignment Error)</dt>
-                <dd>Lower is better. Measures interface quality; values &lt; 0.5 indicate good interfaces.</dd>
-
-                <dt>Binding Affinity (kcal/mol)</dt>
-                <dd>More negative is better. Predicted from PRODIGY; values &lt; -10 indicate strong binding.</dd>
-
-                <dt>Foldseek Distance</dt>
-                <dd>AA differences to closest structural match. Lower indicates similarity to known structures.</dd>
-            </dl>
+            <div class="metric-card">
+                <dl>
+                    <dt>ipSAE</dt>
+                    <dd>Interface Predicted Structural Alignment Error. Lower is better; &lt;0.5 indicates good interfaces.</dd>
+                </dl>
+            </div>
+            <div class="metric-card">
+                <dl>
+                    <dt>Binding Affinity</dt>
+                    <dd>Predicted from PRODIGY (kcal/mol). More negative is better; &lt;-10 indicates strong binding.</dd>
+                </dl>
+            </div>
+            <div class="metric-card">
+                <dl>
+                    <dt>Foldseek Distance</dt>
+                    <dd>AA differences to closest structural match. Lower = more similar to known structures.</dd>
+                </dl>
+            </div>
+            <div class="metric-card">
+                <dl>
+                    <dt>AFDB ID</dt>
+                    <dd>UniProt ID of closest AlphaFold DB match. Click to view entry.</dd>
+                </dl>
+            </div>
         </div>
 
-        <table id="metricsTable" class="display" style="width:100%">
-            <thead>
-                <tr>
-                    <th>Design ID</th>
-                    <th>ipSAE</th>
-                    <th>Binding Affinity (kcal/mol)</th>
-                    <th>Foldseek Target</th>
-                    <th>Foldseek Distance</th>
-                </tr>
-            </thead>
-            <tbody>
-'''
+        <div class="toolbar">
+            <div class="search-box">
+                <input type="text" id="quickFilter" placeholder="Search all columns...">
+            </div>
+            <button class="btn btn-primary" onclick="exportToCsv()">Export CSV</button>
+            <button class="btn btn-secondary" onclick="resetFilters()">Reset Filters</button>
+        </div>
 
-    for row in rows:
-        # Format values
-        ipsae = f"{row['ipsae']:.4f}" if row['ipsae'] is not None else '-'
-        affinity = f"{row['binding_affinity']:.1f}" if row['binding_affinity'] is not None else '-'
-        fs_target = row['foldseek_target'] or '-'
-        fs_dist = f"{row['foldseek_distance']:.1f}" if row['foldseek_distance'] is not None else '-'
-
-        # Add CSS classes for good values
-        ipsae_class = 'good-value' if row['ipsae'] is not None and row['ipsae'] < 0.5 else ''
-        affinity_class = 'good-value' if row['binding_affinity'] is not None and row['binding_affinity'] < -10 else ''
-
-        html += f'''                <tr>
-                    <td><strong>{row['design_id']}</strong></td>
-                    <td class="{ipsae_class}">{ipsae}</td>
-                    <td class="{affinity_class}">{affinity}</td>
-                    <td>{fs_target}</td>
-                    <td>{fs_dist}</td>
-                </tr>
-'''
-
-    html += '''            </tbody>
-        </table>
+        <div id="metricsGrid" class="ag-theme-alpine"></div>
     </div>
 
-    <!-- jQuery -->
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <!-- Sequence Modal -->
+    <div id="sequenceModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Sequence</h3>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div id="modalSequence" class="sequence-display"></div>
+            <button class="btn btn-secondary copy-btn" onclick="copySequence()">Copy to Clipboard</button>
+        </div>
+    </div>
 
-    <!-- DataTables JS -->
-    <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- AG Grid JS -->
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
 
     <script>
-        $(document).ready(function() {
-            $('#metricsTable').DataTable({
-                pageLength: 25,
-                order: [[1, 'desc']],  // Sort by ipSAE descending
-                dom: 'Bfrtip',
-                buttons: [
-                    {
-                        extend: 'csv',
-                        text: 'Export CSV',
-                        filename: 'protein_design_metrics'
-                    },
-                    {
-                        extend: 'copy',
-                        text: 'Copy to Clipboard'
-                    }
-                ],
-                columnDefs: [
-                    {
-                        targets: [1, 2, 4],  // Numeric columns
-                        type: 'num'
-                    }
-                ],
-                language: {
-                    search: "Filter designs:",
-                    lengthMenu: "Show _MENU_ designs per page"
-                }
-            });
-        });
+        // Row data from Python
+        const rowData = {rows_json};
+
+        // Store current sequence for copying
+        let currentSequence = '';
+
+        // Custom cell renderer for sequence (collapsible)
+        function sequenceCellRenderer(params) {{
+            if (!params.value) return '-';
+
+            const seq = params.value;
+            const preview = seq.length > 15 ? seq.substring(0, 15) + '...' : seq;
+
+            return `<span class="sequence-cell sequence-collapsed" onclick="showSequence('${{params.data.design_id}}', '${{seq}}')">${{preview}} <span class="expand-icon">&#x25BC;</span></span>`;
+        }}
+
+        // Custom cell renderer for AFDB link
+        function afdbCellRenderer(params) {{
+            if (!params.value) return '-';
+
+            const url = params.data.afdb_url;
+            if (url) {{
+                return `<a href="${{url}}" target="_blank" class="afdb-link">${{params.value}}</a>`;
+            }}
+            return params.value;
+        }}
+
+        // Custom cell renderer for ipSAE with color coding
+        function ipsaeCellRenderer(params) {{
+            if (params.value === null || params.value === undefined) return '-';
+
+            const val = params.value.toFixed(4);
+            if (params.value < 0.5) {{
+                return `<span class="good-value">${{val}}</span>`;
+            }}
+            return val;
+        }}
+
+        // Custom cell renderer for binding affinity with color coding
+        function affinityCellRenderer(params) {{
+            if (params.value === null || params.value === undefined) return '-';
+
+            const val = params.value.toFixed(1);
+            if (params.value < -10) {{
+                return `<span class="good-value">${{val}}</span>`;
+            }}
+            return val;
+        }}
+
+        // Column definitions
+        const columnDefs = [
+            {{
+                headerName: 'Design ID',
+                field: 'design_id',
+                pinned: 'left',
+                filter: 'agTextColumnFilter',
+                sortable: true,
+                minWidth: 140
+            }},
+            {{
+                headerName: 'ipSAE',
+                field: 'ipsae',
+                filter: 'agNumberColumnFilter',
+                sortable: true,
+                cellRenderer: ipsaeCellRenderer,
+                minWidth: 100
+            }},
+            {{
+                headerName: 'Binding Affinity (kcal/mol)',
+                field: 'binding_affinity',
+                filter: 'agNumberColumnFilter',
+                sortable: true,
+                cellRenderer: affinityCellRenderer,
+                minWidth: 160
+            }},
+            {{
+                headerName: 'AA Length',
+                field: 'aa_length',
+                filter: 'agNumberColumnFilter',
+                sortable: true,
+                minWidth: 100,
+                valueFormatter: params => params.value ? params.value : '-'
+            }},
+            {{
+                headerName: 'Sequence',
+                field: 'sequence',
+                filter: 'agTextColumnFilter',
+                sortable: false,
+                cellRenderer: sequenceCellRenderer,
+                minWidth: 150
+            }},
+            {{
+                headerName: 'AFDB ID',
+                field: 'afdb_id',
+                filter: 'agTextColumnFilter',
+                sortable: true,
+                cellRenderer: afdbCellRenderer,
+                minWidth: 120
+            }},
+            {{
+                headerName: 'Foldseek Distance',
+                field: 'foldseek_distance',
+                filter: 'agNumberColumnFilter',
+                sortable: true,
+                minWidth: 140,
+                valueFormatter: params => params.value !== null && params.value !== undefined ? params.value : '-'
+            }},
+            {{
+                headerName: 'Foldseek Target',
+                field: 'foldseek_target',
+                filter: 'agTextColumnFilter',
+                sortable: true,
+                minWidth: 200,
+                valueFormatter: params => params.value ? params.value : '-'
+            }}
+        ];
+
+        // Grid options
+        const gridOptions = {{
+            columnDefs: columnDefs,
+            rowData: rowData,
+            defaultColDef: {{
+                resizable: true,
+                floatingFilter: true
+            }},
+            animateRows: true,
+            pagination: true,
+            paginationPageSize: 25,
+            paginationPageSizeSelector: [10, 25, 50, 100],
+            domLayout: 'normal'
+        }};
+
+        // Initialize grid
+        document.addEventListener('DOMContentLoaded', function() {{
+            const gridDiv = document.querySelector('#metricsGrid');
+            agGrid.createGrid(gridDiv, gridOptions);
+
+            // Quick filter
+            document.getElementById('quickFilter').addEventListener('input', function(e) {{
+                gridOptions.api.setGridOption('quickFilterText', e.target.value);
+            }});
+        }});
+
+        // Export to CSV
+        function exportToCsv() {{
+            gridOptions.api.exportDataAsCsv({{
+                fileName: 'protein_design_metrics.csv',
+                columnKeys: ['design_id', 'ipsae', 'binding_affinity', 'aa_length', 'sequence', 'afdb_id', 'foldseek_distance', 'foldseek_target']
+            }});
+        }}
+
+        // Reset filters
+        function resetFilters() {{
+            gridOptions.api.setFilterModel(null);
+            document.getElementById('quickFilter').value = '';
+            gridOptions.api.setGridOption('quickFilterText', '');
+        }}
+
+        // Show sequence modal
+        function showSequence(designId, sequence) {{
+            currentSequence = sequence;
+            document.getElementById('modalTitle').textContent = `Sequence: ${{designId}} (${{sequence.length}} AA)`;
+            document.getElementById('modalSequence').textContent = sequence;
+            document.getElementById('sequenceModal').style.display = 'block';
+        }}
+
+        // Close modal
+        function closeModal() {{
+            document.getElementById('sequenceModal').style.display = 'none';
+        }}
+
+        // Copy sequence to clipboard
+        function copySequence() {{
+            navigator.clipboard.writeText(currentSequence).then(function() {{
+                const btn = document.querySelector('.copy-btn');
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = originalText, 2000);
+            }});
+        }}
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {{
+            const modal = document.getElementById('sequenceModal');
+            if (event.target === modal) {{
+                closeModal();
+            }}
+        }}
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(e) {{
+            if (e.key === 'Escape') {{
+                closeModal();
+            }}
+        }});
     </script>
 </body>
 </html>
@@ -461,15 +948,19 @@ def generate_csv_report(metrics, output_file):
             'design_id': design_id,
             'ipsae': data.get('ipsae', ''),
             'binding_affinity_kcal_mol': data.get('binding_affinity', ''),
+            'aa_length': data.get('aa_length', ''),
+            'sequence': data.get('sequence', ''),
+            'afdb_id': data.get('afdb_id', ''),
+            'afdb_url': data.get('afdb_url', ''),
             'foldseek_target': data.get('foldseek_target', ''),
             'foldseek_distance': data.get('foldseek_distance', '')
         })
 
-    # Sort by ipSAE descending
-    rows.sort(key=lambda x: x.get('ipsae') or 0, reverse=True)
+    # Sort by ipSAE ascending (lower = better)
+    rows.sort(key=lambda x: x.get('ipsae') or float('inf'))
 
-    fieldnames = ['design_id', 'ipsae', 'binding_affinity_kcal_mol',
-                  'foldseek_target', 'foldseek_distance']
+    fieldnames = ['design_id', 'ipsae', 'binding_affinity_kcal_mol', 'aa_length',
+                  'sequence', 'afdb_id', 'afdb_url', 'foldseek_target', 'foldseek_distance']
 
     with open(output_file, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -499,6 +990,11 @@ def main():
         help="Directory containing Foldseek summary files"
     )
     parser.add_argument(
+        "--sequence_dir",
+        default=None,
+        help="Directory containing binder sequence FASTA files"
+    )
+    parser.add_argument(
         "--output_html",
         default="design_metrics_report.html",
         help="Output HTML report filename"
@@ -526,6 +1022,7 @@ def main():
         args.ipsae_dir,
         args.prodigy_dir,
         args.foldseek_dir,
+        args.sequence_dir,
         args.ipsae_cutoffs
     )
 

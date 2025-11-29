@@ -14,6 +14,7 @@ include { BOLTZ2_REFOLD } from '../modules/local/boltz2_refold'
 include { IPSAE_CALCULATE } from '../modules/local/ipsae_calculate'
 include { PRODIGY_PREDICT } from '../modules/local/prodigy_predict'
 include { FOLDSEEK_SEARCH } from '../modules/local/foldseek_search'
+include { EXTRACT_BINDER_SEQUENCES } from '../modules/local/extract_binder_sequences'
 include { CONSOLIDATE_METRICS } from '../modules/local/consolidate_metrics'
 
 workflow PROTEIN_DESIGN {
@@ -356,11 +357,46 @@ workflow PROTEIN_DESIGN {
                 .ifEmpty { file('NO_FOLDSEEK_FILES') }
             : Channel.value(file('NO_FOLDSEEK_FILES'))
 
+        // ====================================================================
+        // Extract binder sequences from Boltz-2 structures for the report
+        // ====================================================================
+        if (params.run_proteinmpnn && params.run_boltz2_refold) {
+            // Extract binder sequences from the best model (model_0) structures
+            ch_sequence_input = BOLTZ2_REFOLD.out.structures
+                .flatMap { meta, cif_files ->
+                    def cif_list = cif_files instanceof List ? new ArrayList(cif_files) : [cif_files]
+                    // Filter to only model_0 (best model)
+                    cif_list = cif_list.findAll { it.name.endsWith('model_0.cif') }
+
+                    cif_list.collect { cif_file ->
+                        def seq_meta = [
+                            id: meta.id,
+                            parent_id: meta.parent_id,
+                            rank_num: meta.rank_num,
+                            seq_num: meta.seq_num
+                        ]
+                        [seq_meta, cif_file]
+                    }
+                }
+
+            // Extract binder sequences
+            EXTRACT_BINDER_SEQUENCES(ch_sequence_input)
+
+            // Collect sequence files for consolidation
+            ch_sequence_files = EXTRACT_BINDER_SEQUENCES.out.sequence
+                .map { meta, file -> file }
+                .collect()
+                .ifEmpty { file('NO_SEQUENCE_FILES') }
+        } else {
+            ch_sequence_files = Channel.value(file('NO_SEQUENCE_FILES'))
+        }
+
         // Run consolidation with staged files
         CONSOLIDATE_METRICS(
             ch_ipsae_files,
             ch_prodigy_files,
             ch_foldseek_files,
+            ch_sequence_files,
             ch_consolidate_script
         )
     }
@@ -384,7 +420,10 @@ workflow PROTEIN_DESIGN {
     // Optional analysis outputs (will be empty if not run)
     foldseek_results = (params.run_foldseek && params.run_proteinmpnn && params.run_boltz2_refold) ? FOLDSEEK_SEARCH.out.results : Channel.empty()
     foldseek_summary = (params.run_foldseek && params.run_proteinmpnn && params.run_boltz2_refold) ? FOLDSEEK_SEARCH.out.summary : Channel.empty()
-    
+
+    // Binder sequences (will be empty if not run)
+    binder_sequences = (params.run_consolidation && params.run_proteinmpnn && params.run_boltz2_refold) ? EXTRACT_BINDER_SEQUENCES.out.sequence : Channel.empty()
+
     // Consolidation outputs (will be empty if not run)
     metrics_summary = params.run_consolidation ? CONSOLIDATE_METRICS.out.summary_csv : Channel.empty()
     metrics_report = params.run_consolidation ? CONSOLIDATE_METRICS.out.report_html : Channel.empty()

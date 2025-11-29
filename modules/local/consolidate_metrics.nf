@@ -1,48 +1,51 @@
 process CONSOLIDATE_METRICS {
     label 'process_low'
-    
+
     // Publish reports to top-level output directory
     publishDir "${params.outdir}", mode: params.publish_dir_mode
 
     container 'community.wave.seqera.io/library/numpy:2.3.5--f8d2712d76b3e3ce'
 
     input:
-    val output_dir  // Path to the complete output directory with all results (as string)
+    path ipsae_files, stageAs: 'ipsae/*'       // Collection of ipSAE score files
+    path prodigy_files, stageAs: 'prodigy/*'   // Collection of Prodigy result files
+    path foldseek_files, stageAs: 'foldseek/*' // Collection of Foldseek summary files
     path consolidate_script
 
     output:
+    path "design_metrics_report.html", emit: report_html
     path "design_metrics_summary.csv", emit: summary_csv
-    path "design_metrics_report.md", emit: report_markdown
     path "versions.yml", emit: versions
 
     script:
-    def top_n = params.report_top_n ?: 10
-    def ipsae_pattern = params.ipsae_pae_cutoff && params.ipsae_dist_cutoff ? 
-        "**/ipsae/*_${params.ipsae_pae_cutoff}_${params.ipsae_dist_cutoff}.txt" : 
-        "**/ipsae/*_10_10.txt"
-    def prodigy_pattern = "**/prodigy/*_prodigy_summary.csv"
-    
-    // Convert to absolute path if relative
-    def abs_output_dir = output_dir.startsWith('/') ? output_dir : "${workflow.launchDir}/${output_dir}"
-    
+    def pae_cutoff = params.ipsae_pae_cutoff ?: 10
+    def dist_cutoff = params.ipsae_dist_cutoff ?: 10
+
     """
     # Make script executable
     chmod +x ${consolidate_script}
-    
-    # Debug: Show what directory we're searching
-    echo "Searching in directory: ${abs_output_dir}"
-    echo "Current working directory: \$(pwd)"
-    ls -la ${abs_output_dir} || echo "Warning: Could not list output directory"
-    
-    # Run consolidation script with absolute path
+
+    # Debug: List staged files in subdirectories
+    echo "=== Staged ipSAE files ==="
+    ls -la ipsae/ 2>/dev/null || echo "No ipsae directory"
+    echo ""
+    echo "=== Staged Prodigy files ==="
+    ls -la prodigy/ 2>/dev/null || echo "No prodigy directory"
+    echo ""
+    echo "=== Staged Foldseek files ==="
+    ls -la foldseek/ 2>/dev/null || echo "No foldseek directory"
+    echo ""
+
+    # Run consolidation script with staged subdirectories
     python ${consolidate_script} \\
-        --output_dir "${abs_output_dir}" \\
+        --ipsae_dir "ipsae" \\
+        --prodigy_dir "prodigy" \\
+        --foldseek_dir "foldseek" \\
+        --output_html design_metrics_report.html \\
         --output_csv design_metrics_summary.csv \\
-        --output_markdown design_metrics_report.md \\
-        --top_n ${top_n} \\
-        --ipsae_pattern "${ipsae_pattern}" \\
-        --prodigy_pattern "${prodigy_pattern}"
-    
+        --title "Protein Design Metrics Report" \\
+        --ipsae_cutoffs "${pae_cutoff}_${dist_cutoff}"
+
     # Generate version information
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
@@ -52,8 +55,8 @@ process CONSOLIDATE_METRICS {
 
     stub:
     """
+    touch design_metrics_report.html
     touch design_metrics_summary.csv
-    touch design_metrics_report.md
     touch versions.yml
     """
 }

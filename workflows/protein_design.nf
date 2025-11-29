@@ -9,8 +9,7 @@
 include { BOLTZGEN_RUN } from '../modules/local/boltzgen_run'
 include { CONVERT_CIF_TO_PDB } from '../modules/local/convert_cif_to_pdb'
 include { PROTEINMPNN_OPTIMIZE } from '../modules/local/proteinmpnn_optimize'
-include { SPLIT_PROTEINMPNN_SEQUENCES } from '../modules/local/split_proteinmpnn_sequences'
-include { EXTRACT_TARGET_SEQUENCES } from '../modules/local/extract_target_sequences'
+include { PREPARE_BOLTZ2_SEQUENCES } from '../modules/local/prepare_boltz2_sequences'
 include { BOLTZ2_REFOLD } from '../modules/local/boltz2_refold'
 include { IPSAE_CALCULATE } from '../modules/local/ipsae_calculate'
 include { PRODIGY_PREDICT } from '../modules/local/prodigy_predict'
@@ -53,15 +52,20 @@ workflow PROTEIN_DESIGN {
             .flatMap { meta, pdb_files ->
                 // Convert to list if single file and create defensive copy
                 def pdb_list = pdb_files instanceof List ? new ArrayList(pdb_files) : [pdb_files]
-                
+
                 // Create a separate channel entry for each PDB file
                 pdb_list.collect { pdb_file ->
+                    // Extract rank number from filename (e.g., "rank1_2VSM_protein_design_1" -> "1")
+                    def rank_num = pdb_file.baseName.replaceAll(/^rank(\d+)_.*/, '$1')
+
+                    // Simplified naming: {sample}_r{rank}
                     def design_meta = [
-                        id: "${meta.id}_${pdb_file.baseName}",
+                        id: "${meta.id}_r${rank_num}",
                         parent_id: meta.id,
-                        design_name: pdb_file.baseName
+                        rank_num: rank_num,
+                        design_name: pdb_file.baseName  // Keep original for reference
                     ]
-                    
+
                     [design_meta, pdb_file]
                 }
             }
@@ -73,70 +77,64 @@ workflow PROTEIN_DESIGN {
         ch_final_designs_for_analysis = PROTEINMPNN_OPTIMIZE.out.optimized_designs
         
         // ====================================================================
-        // Step 3: Extract target sequences for Protenix refolding
+        // Step 3: Prepare sequences for Boltz-2 refolding
         // ====================================================================
-        // PURPOSE: Extract the TARGET sequence (binding partner) from Boltzgen structures
-        // WHY: Protenix needs to know which chain is the target (to keep fixed) when
-        //      refolding ProteinMPNN-optimized binder sequences
-        // WHAT: Reads original Boltzgen CIF files and extracts the target chain sequence
-        // OUTPUT: Plain text file with target sequence (one per design)
-        // SOLUTION: Use ONLY the first budget design CIF (rank_1) to avoid naming collisions
-        //           since the target sequence is identical across all designs for a sample
+        // This combines:
+        // 1. Extracting target sequence from Boltzgen structure
+        // 2. Splitting ProteinMPNN FASTA into individual sequence files
         // ====================================================================
         if (params.run_boltz2_refold) {
-            // Extract target sequences from the FIRST budget design only
-            // The target is the same across all designs, so we only need to extract it once
-            ch_boltzgen_structures = BOLTZGEN_RUN.out.budget_design_cifs
-                .map { meta, cif_files ->
-                    // Take only the FIRST CIF file (typically rank_1.cif)
-                    def cif_list = cif_files instanceof List ? cif_files : [cif_files]
-                    def first_cif = cif_list.sort()[0]  // Sort to ensure consistent selection
-                    [meta, first_cif]
-                }
-            
-            EXTRACT_TARGET_SEQUENCES(ch_boltzgen_structures)
-            
-            // ================================================================
-            // Prepare Target MSA from Samplesheet
-            // ================================================================
-            // Use pre-computed MSA files provided in the samplesheet
-            // If no MSA is provided, Boltz-2 will infer missing MSA info for binder
-            ch_target_msa = ch_input
-                .map { meta, design_yaml, structure_files, target_msa ->
-                    // Create a placeholder file if no MSA provided
-                    def msa_file = target_msa ?: file('NO_MSA')
-                    [meta.id, msa_file]
-                }
-            
-            // ================================================================
-            // Prepare inputs for Boltz-2 with target MSA
-            // ================================================================
-            
-            // Step 3a: Split ProteinMPNN multi-sequence FASTAs into individual files
-            // This allows us to parallelize Boltz-2 refolding per sequence
-            ch_mpnn_sequences_to_split = PROTEINMPNN_OPTIMIZE.out.sequences
+            // Prepare input: combine MPNN FASTA files with Boltzgen structures
+            // Use FIRST budget design CIF for target extraction (target is same across all designs)
+            ch_prepare_input = PROTEINMPNN_OPTIMIZE.out.sequences
                 .flatMap { meta, fasta_files ->
                     def fasta_list = fasta_files instanceof List ? new ArrayList(fasta_files) : [fasta_files]
                     fasta_list.collect { fasta_file ->
                         [meta, fasta_file]
                     }
                 }
-                
-            SPLIT_PROTEINMPNN_SEQUENCES(ch_mpnn_sequences_to_split)
+                .map { meta, fasta ->
+                    [meta.parent_id, meta, fasta]
+                }
+                .combine(
+                    BOLTZGEN_RUN.out.budget_design_cifs.map { meta, cif_files ->
+                        def cif_list = cif_files instanceof List ? cif_files : [cif_files]
+                        def first_cif = cif_list.sort()[0]
+                        [meta.id, first_cif]
+                    },
+                    by: 0
+                )
+                .map { parent_id, meta, fasta, cif ->
+                    [meta, fasta, cif]
+                }
             
-            // Step 3b: Create channel for Boltz-2 refolding
-            // Parallelize Boltz-2 per FASTA file (one per ProteinMPNN sequence)
-            // Always use target MSA from samplesheet; Boltz-2 will infer binder MSA
-            ch_boltz2_input = SPLIT_PROTEINMPNN_SEQUENCES.out.sequences
+            // Run combined preparation process
+            PREPARE_BOLTZ2_SEQUENCES(ch_prepare_input)
+            
+            // ================================================================
+            // Prepare Target MSA from Samplesheet
+            // ================================================================
+            ch_target_msa = ch_input
+                .map { meta, design_yaml, structure_files, target_msa ->
+                    def msa_file = target_msa ?: file('NO_MSA')
+                    [meta.id, msa_file]
+                }
+            
+            // ================================================================
+            // Create channel for Boltz-2 refolding
+            // ================================================================
+            ch_boltz2_input = PREPARE_BOLTZ2_SEQUENCES.out.sequences
                 .flatMap { meta, fasta_files ->
                     def fasta_list = fasta_files instanceof List ? new ArrayList(fasta_files) : [fasta_files]
                     fasta_list.collect { fasta_file ->
-                        // Extract sequence number from filename (e.g., ..._seq_1.fa)
                         def seq_num = fasta_file.baseName.replaceAll(/.*_seq_(\d+)$/, '$1')
-                        
+
+                        // Simplified naming: {sample}_r{rank}_s{seq}
                         def seq_meta = [
-                            id: "${meta.id}_seq_${seq_num}",
+                            id: "${meta.id}_s${seq_num}",
                             parent_id: meta.parent_id,
+                            rank_num: meta.rank_num,
+                            seq_num: seq_num,
                             mpnn_parent_id: meta.id,
                             sequence_name: fasta_file.baseName
                         ]
@@ -144,16 +142,16 @@ workflow PROTEIN_DESIGN {
                     }
                 }
                 .map { meta, fasta -> 
-                    [meta.parent_id, meta, fasta]
+                    [meta.mpnn_parent_id, meta, fasta]
                 }
                 .combine(
-                    EXTRACT_TARGET_SEQUENCES.out.target_sequences.map { meta, seq -> 
+                    PREPARE_BOLTZ2_SEQUENCES.out.target_sequence.map { meta, seq -> 
                         [meta.id, seq]
                     },
                     by: 0
                 )
-                .map { parent_id, meta, fasta, target_seq ->
-                    [parent_id, meta, fasta, target_seq]
+                .map { mpnn_parent_id, meta, fasta, target_seq ->
+                    [meta.parent_id, meta, fasta, target_seq]
                 }
                 .combine(ch_target_msa, by: 0)
                 .map { parent_id, meta, fasta, target_seq, target_msa ->
@@ -177,85 +175,49 @@ workflow PROTEIN_DESIGN {
     //   1. Boltzgen budget designs (native NPZ output)
     //   2. Boltz-2 refolded structures (native NPZ output - no conversion needed!)
     if (params.run_ipsae) {
-        // Prepare IPSAE script as a channel
-        ch_ipsae_script = Channel.fromPath("${projectDir}/assets/ipsae.py", checkIfExists: true)
+        // Prepare IPSAE script as a value channel (reusable across all tasks)
+        ch_ipsae_script = Channel.fromPath("${projectDir}/assets/ipsae.py", checkIfExists: true).first()
         
         // ====================================================================
-        // Part 1: Process Boltzgen budget design CIF and NPZ files
+        // Process Boltz-2 refolded structures
         // ====================================================================
-        // Process ALL budget design CIF and NPZ files from intermediate_designs_inverse_folded
-        // This ensures we run IPSAE on ALL designs before filtering (e.g., if budget=10, run 10 times)
-        ch_ipsae_boltzgen = BOLTZGEN_RUN.out.budget_design_cifs
-            .join(BOLTZGEN_RUN.out.budget_design_npz, by: 0)
-            .flatMap { meta, cif_files, npz_files ->
-                // Convert to list if single file and create defensive copies
-                def cif_list = cif_files instanceof List ? new ArrayList(cif_files) : [cif_files]
-                def npz_list = npz_files instanceof List ? new ArrayList(npz_files) : [npz_files]
-                
-                // Create a map of basenames to files for quick lookup
-                def npz_map = [:]
-                npz_list.each { npz_file ->
-                    npz_map[npz_file.baseName] = npz_file
-                }
-                
-                // Match CIF files with corresponding NPZ files
-                cif_list.collect { cif_file ->
-                    def base_name = cif_file.baseName
-                    // Strip rank prefix (e.g. rank1_target_protein_design_1 -> target_protein_design_1)
-                    def match_name = base_name.replaceAll(/^rank\d+_/, '')
-                    def npz_file = npz_map[match_name]
-                    
-                    if (npz_file) {
-                        def model_meta = [
-                            id: "${meta.id}_${base_name}",
-                            parent_id: meta.id,
-                            model_id: "${meta.id}_${base_name}",
-                            source: "boltzgen"
-                        ]
-                        
-                        [model_meta, npz_file, cif_file]
-                    } else {
-                        log.warn "⚠️  No matching NPZ file found for ${cif_file.name} in design ${meta.id}"
-                        null
-                    }
-                }.findAll { it != null }  // Remove null entries where no match was found
-            }
-        
-        // ====================================================================
-        // Part 2: Process Boltz-2 refolded structures (if enabled)
-        // ====================================================================
-        // Add Boltz-2 NPZ files if Boltz-2 refolding is enabled
         if (params.run_proteinmpnn && params.run_boltz2_refold) {
             // Get NPZ and CIF pairs directly from Boltz-2 (native NPZ output!)
-            ch_ipsae_boltz2 = BOLTZ2_REFOLD.out.structures
+            // Only use the best model (model_0) from each Boltz2 prediction
+            ch_ipsae_input = BOLTZ2_REFOLD.out.structures
                 .join(BOLTZ2_REFOLD.out.pae_npz, by: 0)
                 .flatMap { meta, cif_files, npz_files ->
                     // Convert to lists if single files
                     def cif_list = cif_files instanceof List ? cif_files : [cif_files]
                     def npz_list = npz_files instanceof List ? npz_files : [npz_files]
-                    
+
+                    // Filter to only model_0 (best model)
+                    cif_list = cif_list.findAll { it.name.endsWith('model_0.cif') }
+                    npz_list = npz_list.findAll { it.name.contains('model_0') }
+
                     // Create a map of basenames for matching
                     def npz_map = [:]
                     npz_list.each { npz_file ->
-                        // Extract base name (without _pae suffix if present)
-                        def base_name = npz_file.baseName.replaceAll(/^pae_|_pae/, '')
+                        // Extract base name (without pae_ prefix)
+                        def base_name = npz_file.baseName.replaceAll(/^pae_/, '')
                         npz_map[base_name] = npz_file
                     }
-                    
+
                     // Match CIF files with their NPZ files
                     cif_list.collect { cif_file ->
                         def base_name = cif_file.baseName
                         def npz_file = npz_map[base_name]
-                        
+
                         if (npz_file) {
+                            // Use simplified naming from Boltz2 meta directly
                             def ipsae_meta = [
-                                id: "${meta.id}_${base_name}",
+                                id: meta.id,
                                 parent_id: meta.parent_id,
-                                mpnn_parent_id: meta.mpnn_parent_id,
-                                model_id: base_name,
+                                rank_num: meta.rank_num,
+                                seq_num: meta.seq_num,
                                 source: "boltz2"
                             ]
-                            
+
                             [ipsae_meta, npz_file, cif_file]
                         } else {
                             log.warn "⚠️  No matching NPZ file found for ${cif_file.name}"
@@ -263,75 +225,51 @@ workflow PROTEIN_DESIGN {
                         }
                     }.findAll { it != null }
                 }
-            
-            // Combine both Boltzgen and Boltz-2 inputs
-            ch_ipsae_input = ch_ipsae_boltzgen.mix(ch_ipsae_boltz2)
+
+            // Run IPSAE calculation
+            IPSAE_CALCULATE(ch_ipsae_input, ch_ipsae_script)
         } else {
-            // Only Boltzgen inputs
-            ch_ipsae_input = ch_ipsae_boltzgen
+            log.warn "⚠️  IPSAE requested but ProteinMPNN/Boltz2 not enabled. Skipping IPSAE."
         }
-        
-        // Run IPSAE calculation for all CIF/NPZ pairs (Boltzgen + Protenix)
-        IPSAE_CALCULATE(ch_ipsae_input, ch_ipsae_script)
     }
     
     // ========================================================================
     // OPTIONAL: PRODIGY binding affinity prediction if enabled
     // ========================================================================
     if (params.run_prodigy) {
-        // Prepare PRODIGY parser script as a channel
-        ch_prodigy_script = Channel.fromPath("${projectDir}/assets/parse_prodigy_output.py", checkIfExists: true)
+        // Prepare PRODIGY parser script as a value channel (reusable across all tasks)
+        ch_prodigy_script = Channel.fromPath("${projectDir}/assets/parse_prodigy_output.py", checkIfExists: true).first()
         
-        // Use ALL budget design CIF files from intermediate_designs_inverse_folded
-        // This ensures we run PRODIGY on ALL designs before filtering (e.g., if budget=10, run 10 times)
-        // Strategy: Use flatMap to create individual tasks for each CIF file
-        ch_prodigy_input = BOLTZGEN_RUN.out.budget_design_cifs
-            .flatMap { meta, cif_files ->
-                // Convert to list if single file and create defensive copy
-                def cif_list = cif_files instanceof List ? new ArrayList(cif_files) : [cif_files]
-                
-                // Create a separate entry for each CIF file
-                cif_list.collect { cif_file ->
-                    def base_name = cif_file.baseName
-                    // Create new meta map explicitly to avoid concurrent modification
-                    def design_meta = [
-                        id: "${meta.id}_${base_name}",
-                        parent_id: meta.id,
-                        source: "boltzgen"
-                    ]
-                    
-                    [design_meta, cif_file]
-                }
-            }
-        
-        // Add Boltz-2-refolded structures if available
         if (params.run_proteinmpnn && params.run_boltz2_refold) {
-            ch_prodigy_boltz2 = BOLTZ2_REFOLD.out.structures
+            // Only use the best model (model_0) from each Boltz2 prediction
+            ch_prodigy_input = BOLTZ2_REFOLD.out.structures
                 .flatMap { meta, cif_files ->
                     // Convert to list if single file and create defensive copy
                     def cif_list = cif_files instanceof List ? new ArrayList(cif_files) : [cif_files]
-                    
+
+                    // Filter to only model_0 (best model)
+                    cif_list = cif_list.findAll { it.name.endsWith('model_0.cif') }
+
                     // Create a separate entry for each CIF file
                     cif_list.collect { cif_file ->
-                        def base_name = cif_file.baseName
-                        // Create new meta map explicitly to avoid concurrent modification
+                        // Use simplified naming from Boltz2 meta directly
                         def design_meta = [
-                            id: "${meta.id}_${base_name}_boltz2",
-                            parent_id: meta.parent_id,  // Maintain link to original Boltzgen design
-                            mpnn_parent_id: meta.id,     // Track which ProteinMPNN design this came from
+                            id: meta.id,
+                            parent_id: meta.parent_id,
+                            rank_num: meta.rank_num,
+                            seq_num: meta.seq_num,
                             source: "boltz2"
                         ]
-                        
+
                         [design_meta, cif_file]
                     }
                 }
-            
-            // Combine both sources
-            ch_prodigy_input = ch_prodigy_input.mix(ch_prodigy_boltz2)
+
+            // Run PRODIGY binding affinity prediction
+            PRODIGY_PREDICT(ch_prodigy_input, ch_prodigy_script)
+        } else {
+            log.warn "⚠️  Prodigy requested but ProteinMPNN/Boltz2 not enabled. Skipping Prodigy."
         }
-        
-        // Run PRODIGY binding affinity prediction for all CIF files (Boltzgen + Boltz-2)
-        PRODIGY_PREDICT(ch_prodigy_input, ch_prodigy_script)
     }
     
     // ========================================================================
@@ -349,102 +287,81 @@ workflow PROTEIN_DESIGN {
         }
         
         // ====================================================================
-        // Part 1: Process Boltzgen budget design CIF files
+        // Process Boltz-2 refolded structures
         // ====================================================================
-        // Use ALL budget design CIF files from intermediate_designs_inverse_folded
-        // This searches for homologs of the original Boltzgen-designed structures
-        ch_foldseek_boltzgen = BOLTZGEN_RUN.out.budget_design_cifs
-            .flatMap { meta, cif_files ->
-                // Convert to list if single file and create defensive copy
-                def cif_list = cif_files instanceof List ? new ArrayList(cif_files) : [cif_files]
-                
-                // Create a separate entry for each CIF file
-                cif_list.collect { cif_file ->
-                    def base_name = cif_file.baseName
-                    // Create new meta map explicitly to avoid concurrent modification
-                    def design_meta = [
-                        id: "${meta.id}_${base_name}",
-                        parent_id: meta.id,
-                        source: "boltzgen"
-                    ]
-                    
-                    [design_meta, cif_file]
-                }
-            }
-        
-        // ====================================================================
-        // Part 2: Add Boltz-2 refolded structures (if enabled)
-        // ====================================================================
-        // Search for homologs of the Boltz-2 refolded structures with MPNN sequences
         if (params.run_proteinmpnn && params.run_boltz2_refold) {
-            ch_foldseek_boltz2 = BOLTZ2_REFOLD.out.structures
+            // Only use the best model (model_0) from each Boltz2 prediction
+            ch_foldseek_input = BOLTZ2_REFOLD.out.structures
                 .flatMap { meta, cif_files ->
                     // Convert to list if single file and create defensive copy
                     def cif_list = cif_files instanceof List ? new ArrayList(cif_files) : [cif_files]
-                    
+
+                    // Filter to only model_0 (best model)
+                    cif_list = cif_list.findAll { it.name.endsWith('model_0.cif') }
+
                     // Create a separate entry for each CIF file
                     cif_list.collect { cif_file ->
-                        def base_name = cif_file.baseName
+                        // Use simplified naming from Boltz2 meta directly
                         def design_meta = [
-                            id: "${meta.id}_${base_name}_boltz2",
-                            parent_id: meta.parent_id,  // Link to original Boltzgen design
-                            mpnn_parent_id: meta.id,     // Track which ProteinMPNN design this came from
+                            id: meta.id,
+                            parent_id: meta.parent_id,
+                            rank_num: meta.rank_num,
+                            seq_num: meta.seq_num,
                             source: "boltz2"
                         ]
-                        
+
                         [design_meta, cif_file]
                     }
                 }
-            
-            // Combine both Boltzgen and Boltz-2 structures
-            ch_foldseek_input = ch_foldseek_boltzgen.mix(ch_foldseek_boltz2)
+
+            // Run Foldseek structural search
+            FOLDSEEK_SEARCH(ch_foldseek_input, ch_foldseek_database)
         } else {
-            // Only Boltzgen structures
-            ch_foldseek_input = ch_foldseek_boltzgen
+            log.warn "⚠️  Foldseek requested but ProteinMPNN/Boltz2 not enabled. Skipping Foldseek."
         }
-        
-        // Run Foldseek structural search for all CIF files (Boltzgen + Boltz-2)
-        // This runs in parallel with IPSAE and PRODIGY analyses
-        FOLDSEEK_SEARCH(ch_foldseek_input, ch_foldseek_database)
     }
     
     // ========================================================================
     // CONSOLIDATION: Generate comprehensive metrics report
     // ========================================================================
     if (params.run_consolidation) {
-        // Prepare consolidation script as a channel
-        ch_consolidate_script = Channel.fromPath("${projectDir}/assets/consolidate_design_metrics.py", checkIfExists: true)
-        
-        // Create a trigger channel that waits for all analyses to complete
-        // Collect all output channels that need to complete before consolidation
-        // Start with Boltzgen results (always runs)
-        ch_trigger = BOLTZGEN_RUN.out.results.collect()
-        
-        // Mix in other outputs based on what's enabled
-        if (params.run_proteinmpnn) {
-            ch_trigger = ch_trigger.mix(PROTEINMPNN_OPTIMIZE.out.optimized_designs.collect())
-        }
-        
-        if (params.run_ipsae) {
-            ch_trigger = ch_trigger.mix(IPSAE_CALCULATE.out.scores.collect())
-        }
-        
-        if (params.run_prodigy) {
-            ch_trigger = ch_trigger.mix(PRODIGY_PREDICT.out.summary.collect())
-        }
-        
-        if (params.run_foldseek) {
-            ch_trigger = ch_trigger.mix(FOLDSEEK_SEARCH.out.summary.collect())
-        }
-        
-        // After all outputs are collected, create a single trigger
-        // and map it to the output directory path
-        ch_outdir = ch_trigger
-            .collect()
-            .map { params.outdir }
-        
-        // Run consolidation after all analyses are complete
-        CONSOLIDATE_METRICS(ch_outdir, ch_consolidate_script)
+        // Prepare consolidation script as a value channel (reusable)
+        ch_consolidate_script = Channel.fromPath("${projectDir}/assets/consolidate_design_metrics.py", checkIfExists: true).first()
+
+        // Collect output files from each analysis process
+        // These will be staged into the consolidation task's work directory
+
+        // ipSAE scores (the .txt files, not byres)
+        ch_ipsae_files = (params.run_ipsae && params.run_proteinmpnn && params.run_boltz2_refold)
+            ? IPSAE_CALCULATE.out.scores
+                .map { meta, file -> file }
+                .collect()
+                .ifEmpty { file('NO_IPSAE_FILES') }
+            : Channel.value(file('NO_IPSAE_FILES'))
+
+        // Prodigy results (.txt files)
+        ch_prodigy_files = (params.run_prodigy && params.run_proteinmpnn && params.run_boltz2_refold)
+            ? PRODIGY_PREDICT.out.results
+                .map { meta, file -> file }
+                .collect()
+                .ifEmpty { file('NO_PRODIGY_FILES') }
+            : Channel.value(file('NO_PRODIGY_FILES'))
+
+        // Foldseek summaries (.tsv files)
+        ch_foldseek_files = (params.run_foldseek && params.run_proteinmpnn && params.run_boltz2_refold)
+            ? FOLDSEEK_SEARCH.out.summary
+                .map { meta, file -> file }
+                .collect()
+                .ifEmpty { file('NO_FOLDSEEK_FILES') }
+            : Channel.value(file('NO_FOLDSEEK_FILES'))
+
+        // Run consolidation with staged files
+        CONSOLIDATE_METRICS(
+            ch_ipsae_files,
+            ch_prodigy_files,
+            ch_foldseek_files,
+            ch_consolidate_script
+        )
     }
 
     emit:
@@ -464,10 +381,10 @@ workflow PROTEIN_DESIGN {
     boltz2_affinity = (params.run_proteinmpnn && params.run_boltz2_refold) ? BOLTZ2_REFOLD.out.affinity : Channel.empty()
     
     // Optional analysis outputs (will be empty if not run)
-    foldseek_results = params.run_foldseek ? FOLDSEEK_SEARCH.out.results : Channel.empty()
-    foldseek_summary = params.run_foldseek ? FOLDSEEK_SEARCH.out.summary : Channel.empty()
+    foldseek_results = (params.run_foldseek && params.run_proteinmpnn && params.run_boltz2_refold) ? FOLDSEEK_SEARCH.out.results : Channel.empty()
+    foldseek_summary = (params.run_foldseek && params.run_proteinmpnn && params.run_boltz2_refold) ? FOLDSEEK_SEARCH.out.summary : Channel.empty()
     
     // Consolidation outputs (will be empty if not run)
     metrics_summary = params.run_consolidation ? CONSOLIDATE_METRICS.out.summary_csv : Channel.empty()
-    metrics_report = params.run_consolidation ? CONSOLIDATE_METRICS.out.report_markdown : Channel.empty()
+    metrics_report = params.run_consolidation ? CONSOLIDATE_METRICS.out.report_html : Channel.empty()
 }

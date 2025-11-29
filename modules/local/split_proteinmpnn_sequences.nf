@@ -5,7 +5,7 @@
     This process takes a multi-sequence FASTA file from ProteinMPNN and splits it
     into individual FASTA files, one per sequence.
     
-    It skips the first sequence (original binder) and only outputs the new designed sequences.
+    All sequences are included (original Boltzgen sequence + MPNN-designed sequences).
 ----------------------------------------------------------------------------------------
 */
 
@@ -57,23 +57,21 @@ process SPLIT_PROTEINMPNN_SEQUENCES {
             
         print(f"Found {len(sequences)} sequences in {input_file}")
         
-        # Skip the first sequence (original)
-        sequences_to_process = sequences[1:] if len(sequences) > 1 else []
+        # Include ALL sequences (including the original first sequence)
+        sequences_to_process = sequences
         
         if not sequences_to_process:
-            print(f"Warning: Only found 1 sequence (original), no new MPNN sequences to split")
-            # Create a placeholder to avoid error if downstream expects output
-            # But typically we want to output nothing if no new sequences
+            print(f"Warning: No sequences found in FASTA file")
             return
             
-        print(f"Splitting {len(sequences_to_process)} new MPNN sequences")
+        print(f"Splitting {len(sequences_to_process)} sequences (including original)")
         
         # Write each sequence to a separate file
         base_name = os.path.splitext(os.path.basename(input_file))[0]
         
         for idx, (header, seq) in enumerate(sequences_to_process):
-            # Use 1-based indexing for filenames to match typical user expectations
-            seq_num = idx + 1
+            # Use 0-based indexing: seq_0 is original, seq_1+ are MPNN designs
+            seq_num = idx
             output_file = f"{base_name}_seq_{seq_num}.fa"
             
             with open(output_file, 'w') as out:

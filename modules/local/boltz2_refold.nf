@@ -31,10 +31,10 @@ process BOLTZ2_REFOLD {
 
     output:
     tuple val(meta), path("${meta.id}_boltz2_output"), emit: predictions
-    tuple val(meta), path("${meta.id}_boltz2_output/**/*.cif"), optional: true, emit: structures
-    tuple val(meta), path("${meta.id}_boltz2_output/**/*confidence*.json"), optional: true, emit: confidence
-    tuple val(meta), path("${meta.id}_boltz2_output/**/*pae*.npz"), optional: true, emit: pae_npz
-    tuple val(meta), path("${meta.id}_boltz2_output/**/*affinity*.json"), optional: true, emit: affinity
+    tuple val(meta), path("${meta.id}_boltz2_output/*.cif"), optional: true, emit: structures
+    tuple val(meta), path("${meta.id}_boltz2_output/*confidence*.json"), optional: true, emit: confidence
+    tuple val(meta), path("${meta.id}_boltz2_output/*pae*.npz"), optional: true, emit: pae_npz
+    tuple val(meta), path("${meta.id}_boltz2_output/*affinity*.json"), optional: true, emit: affinity
     path "versions.yml", emit: versions
 
     script:
@@ -126,33 +126,51 @@ process BOLTZ2_REFOLD {
     # Organize outputs
     echo ""
     echo "Organizing outputs..."
-    
-    # Move all results to output directory with sequence-specific naming
+
+    # Move all results to output directory
+    # Boltz2 output structure: boltz2_results/boltz_results_<name>/predictions/<name>/<files>
     if [ -d "boltz2_results" ]; then
         mkdir -p ${meta.id}_boltz2_output
-        
-        # Process each prediction directory
-        for pred_dir in boltz2_results/predictions/*_seq_*; do
-            if [ -d "\${pred_dir}" ]; then
-                # Extract sequence number from directory name
-                seq_num=\$(basename "\${pred_dir}" | grep -oP '_seq_\\K[0-9]+')
-                
-                echo "  Processing sequence \${seq_num}..."
-                
-                # Rename files to include sequence suffix
-                find "\${pred_dir}" -type f \\( -name "*.cif" -o -name "*.json" -o -name "*.npz" \\) | while read file; do
-                    filename=\$(basename "\${file}")
-                    extension="\${filename##*.}"
-                    basename_without_ext="\${filename%.*}"
-                    
-                    # Add sequence suffix before extension
-                    new_filename="\${basename_without_ext}_seq\${seq_num}.\${extension}"
-                    
-                    # Copy to output directory
-                    cp "\${file}" "${meta.id}_boltz2_output/\${new_filename}"
-                    echo "    Saved: \${new_filename}"
-                done
-            fi
+
+        echo "  Searching for Boltz2 output files..."
+
+        # Find all prediction directories (handles nested structure)
+        find boltz2_results -type d -name "predictions" | while read pred_parent; do
+            # Get the actual prediction subdirectories
+            for pred_dir in "\${pred_parent}"/*/; do
+                if [ -d "\${pred_dir}" ]; then
+                    dir_name=\$(basename "\${pred_dir}")
+                    echo "  Processing prediction: \${dir_name}"
+
+                    # Copy CIF files (format: <name>_model_0.cif)
+                    find "\${pred_dir}" -name "*.cif" -type f | while read file; do
+                        filename=\$(basename "\${file}")
+                        cp "\${file}" "${meta.id}_boltz2_output/\${filename}"
+                        echo "    Saved CIF: \${filename}"
+                    done
+
+                    # Copy PAE NPZ files (format: pae_<name>_model_0.npz)
+                    find "\${pred_dir}" -name "pae*.npz" -type f | while read file; do
+                        filename=\$(basename "\${file}")
+                        cp "\${file}" "${meta.id}_boltz2_output/\${filename}"
+                        echo "    Saved PAE: \${filename}"
+                    done
+
+                    # Copy confidence JSON files
+                    find "\${pred_dir}" -name "*confidence*.json" -type f | while read file; do
+                        filename=\$(basename "\${file}")
+                        cp "\${file}" "${meta.id}_boltz2_output/\${filename}"
+                        echo "    Saved confidence: \${filename}"
+                    done
+
+                    # Copy affinity JSON files
+                    find "\${pred_dir}" -name "*affinity*.json" -type f | while read file; do
+                        filename=\$(basename "\${file}")
+                        cp "\${file}" "${meta.id}_boltz2_output/\${filename}"
+                        echo "    Saved affinity: \${filename}"
+                    done
+                fi
+            done
         done
     fi
     

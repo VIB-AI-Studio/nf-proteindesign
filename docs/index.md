@@ -13,7 +13,7 @@
 **nf-proteindesign** is a Nextflow pipeline for high-throughput protein design using [Boltzgen](https://github.com/HannesStark/boltzgen), an all-atom generative diffusion model. Design proteins, peptides, and nanobodies to bind various biomolecular targets with a comprehensive suite of downstream analysis modules.
 
 !!! tip "Modular Analysis Pipeline"
-    The pipeline combines Boltzgen design with optional sequence optimization (ProteinMPNN + Protenix), quality assessment (ipSAE, PRODIGY, Foldseek), and unified reporting (metrics consolidation).
+    The pipeline combines Boltzgen design with optional sequence optimization (ProteinMPNN + Boltz-2), quality assessment (ipSAE, PRODIGY, Foldseek), and unified reporting (metrics consolidation).
 ## :material-package-variant-closed: Analysis Modules
 
 <div class="feature-grid">
@@ -24,14 +24,14 @@
   </div>
   
   <div class="feature-card">
-    <h3>🔄 Protenix</h3>
+    <h3>🔄 Boltz-2</h3>
     <p>Structure prediction for ProteinMPNN sequences to validate refolding.</p>
-    <code>--run_protenix_refold</code>
+    <code>--run_boltz2_refold</code>
   </div>
   
   <div class="feature-card">
     <h3>📊 ipSAE</h3>
-    <p>Interface quality scoring for Boltzgen and Protenix structures.</p>
+    <p>Interface quality scoring for Boltzgen and Boltz-2 structures.</p>
     <code>--run_ipsae</code>
   </div>
   
@@ -59,7 +59,7 @@
 - **:material-parallel: Parallel Processing**: Run multiple design specifications simultaneously
 - **:material-file-code: YAML-Based Design**: Complete control with custom design specifications
 - **:material-chart-line: Comprehensive Analysis**: Six optional analysis modules for quality assessment
-- **:material-refresh: Sequence Optimization**: ProteinMPNN + Protenix validation workflow
+- **:material-refresh: Sequence Optimization**: ProteinMPNN + Boltz-2 validation workflow
 - **:material-docker: Container Support**: Full Docker compatibility
 - **:material-gpu: GPU Acceleration**: Optimized for NVIDIA GPU execution
 - **:material-file-tree: Organized Outputs**: Structured results with unified reporting
@@ -73,7 +73,7 @@ graph LR
     
     C --> D{ProteinMPNN?}
     D -->|Yes| E[Sequence Optimization]
-    E --> F{Protenix?}
+    E --> F{Boltz-2?}
     F -->|Yes| G[Structure Refold]
     
     C --> H[Analysis Modules]

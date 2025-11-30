@@ -15,21 +15,21 @@ flowchart TD
     
     D --> E{ProteinMPNN?}
     E -->|Yes| F[ProteinMPNN Optimize]
-    F --> G{Protenix Refold?}
-    G -->|Yes| H[Protenix Predict]
+    F --> G{Boltz-2 Refold?}
+    G -->|Yes| H[Boltz-2 Predict]
     H --> I[Convert JSON to NPZ]
     
     D --> J{IPSAE?}
     J -->|Yes| K1[IPSAE: Boltzgen]
-    I -->|Yes| K2[IPSAE: Protenix]
+    I -->|Yes| K2[IPSAE: Boltz-2]
     
     D --> L{PRODIGY?}
     L -->|Yes| M1[PRODIGY: Boltzgen]
-    H -->|Yes| M2[PRODIGY: Protenix]
+    H -->|Yes| M2[PRODIGY: Boltz-2]
     
     D --> N{Foldseek?}
     N -->|Yes| O1[Foldseek: Boltzgen]
-    H -->|Yes| O2[Foldseek: Protenix]
+    H -->|Yes| O2[Foldseek: Boltz-2]
     
     K1 --> P{Consolidate?}
     K2 --> P
@@ -88,10 +88,10 @@ workflow {
         CONVERT_CIF_TO_PDB(budget_designs)
         PROTEINMPNN_OPTIMIZE(pdb_files)
         
-        if (params.run_protenix_refold) {
+        if (params.run_boltz2_refold) {
             EXTRACT_TARGET_SEQUENCES(boltzgen_structures)
             PROTENIX_REFOLD(mpnn_sequences, target_sequences)
-            CONVERT_PROTENIX_TO_NPZ(protenix_outputs)
+            CONVERT_PROTENIX_TO_NPZ(boltz2_outputs)
         }
     }
 }
@@ -106,8 +106,8 @@ workflow {
     // All analyses run in parallel on budget designs
     if (params.run_ipsae) {
         IPSAE_CALCULATE(boltzgen_cifs, boltzgen_npz)
-        if (protenix_enabled) {
-            IPSAE_CALCULATE(protenix_cifs, protenix_npz)
+        if (boltz2_enabled) {
+            IPSAE_CALCULATE(boltz2_cifs, boltz2_npz)
         }
     }
     
@@ -135,7 +135,7 @@ workflow {
 | `CONVERT_CIF_TO_PDB` | Convert CIF to PDB format | `cpu` |
 | `PROTEINMPNN_OPTIMIZE` | ProteinMPNN sequence optimization | `gpu` |
 | `EXTRACT_TARGET_SEQUENCES` | Extract sequences from structures | `cpu` |
-| `PROTENIX_REFOLD` | Protenix structure prediction | `gpu` |
+| `PROTENIX_REFOLD` | Boltz-2 structure prediction | `gpu` |
 | `CONVERT_PROTENIX_TO_NPZ` | Convert confidence JSON to NPZ | `cpu` |
 | `IPSAE_CALCULATE` | ipSAE interface scoring | `gpu` |
 | `PRODIGY_PREDICT` | PRODIGY binding affinity prediction | `cpu` |
@@ -171,8 +171,8 @@ modules/local/
 ├── convert_cif_to_pdb.nf            # CIF to PDB conversion
 ├── proteinmpnn_optimize.nf          # ProteinMPNN optimization
 ├── extract_target_sequences.nf      # Extract target sequences
-├── protenix_refold.nf               # Protenix structure prediction
-├── convert_protenix_to_npz.nf       # JSON to NPZ conversion
+├── boltz2_refold.nf               # Boltz-2 structure prediction
+├── convert_boltz2_to_npz.nf       # JSON to NPZ conversion
 ├── ipsae_calculate.nf               # ipSAE interface scoring
 ├── prodigy_predict.nf               # PRODIGY binding affinity
 ├── foldseek_search.nf               # Foldseek structural search
@@ -224,12 +224,12 @@ params {
 
 - Convert CIF to PDB format
 - ProteinMPNN sequence optimization
-- Protenix structure prediction
-- Convert Protenix JSON to NPZ
+- Boltz-2 structure prediction
+- Convert Boltz-2 JSON to NPZ
 
 ### 4. Parallel Analysis (Optional)
 
-- **ipSAE**: Interface quality scoring (Boltzgen + Protenix)
+- **ipSAE**: Interface quality scoring (Boltzgen + Boltz-2)
 - **PRODIGY**: Binding affinity prediction (all structures)
 - **Foldseek**: Structural similarity search (all structures)
 

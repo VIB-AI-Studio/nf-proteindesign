@@ -119,7 +119,7 @@ nav:
     - Quick Reference: getting-started/quick-reference.md
   
   - Analysis Modules:
-    - ProteinMPNN & Protenix: analysis/proteinmpnn-protenix.md
+    - ProteinMPNN & Boltz-2: analysis/proteinmpnn-boltz2.md
     - ipSAE Scoring: analysis/ipsae.md
     - PRODIGY Binding Affinity: analysis/prodigy.md
     - Foldseek Structural Search: analysis/foldseek.md

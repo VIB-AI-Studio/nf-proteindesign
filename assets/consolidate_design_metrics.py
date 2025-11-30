@@ -163,6 +163,9 @@ def parse_sequence_file(seq_file):
     """
     Parse FASTA sequence file and extract the binder sequence.
 
+    ProteinMPNN sequences may contain both binder and target separated by '/'.
+    This function extracts only the binder sequence (before the '/').
+
     Returns the amino acid sequence string or None.
     """
     if not os.path.exists(seq_file):
@@ -192,9 +195,14 @@ def parse_sequence_file(seq_file):
         if not sequences:
             return None
 
-        # Return the binder sequence (always the shortest one)
-        # The binder is the designed smaller protein
-        return min(sequences, key=lambda x: len(x[1]))[1]
+        # Get the shortest sequence (the binder is the designed smaller protein)
+        full_sequence = min(sequences, key=lambda x: len(x[1]))[1]
+        
+        # Extract only the binder sequence (before the '/' if present)
+        # ProteinMPNN format: BINDER_SEQUENCE/TARGET_SEQUENCE
+        binder_sequence = full_sequence.split('/')[0]
+        
+        return binder_sequence
 
     except Exception as e:
         print(f"Warning: Could not parse sequence file {seq_file}: {e}", file=sys.stderr)
@@ -206,13 +214,16 @@ def extract_design_id_from_ipsae(filename):
     """
     Extract design ID from ipSAE filename.
 
-    Example: 2vsm_r1_s0_seq_0_model_0_10_10.txt -> 2vsm_r1_s0
+    Boltz2 CIF files are named: {design_id}_model_0.cif
+    ipSAE outputs: {design_id}_model_0_{pae}_{dist}.txt
+
+    Example: 2vsm_r1_s0_model_0_10_10.txt -> 2vsm_r1_s0
     """
     base = Path(filename).stem
-    # Remove _XX_XX cutoff pattern at the end
+    # Remove _XX_XX cutoff pattern at the end (e.g., _10_10)
     base = re.sub(r'_\d+_\d+$', '', base)
-    # Remove _seq_X_model_Y pattern
-    base = re.sub(r'_seq_\d+_model_\d+$', '', base)
+    # Remove _model_X pattern (from Boltz2 output naming)
+    base = re.sub(r'_model_\d+$', '', base)
     return base
 
 
@@ -240,14 +251,12 @@ def extract_design_id_from_sequence(filename):
     """
     Extract design ID from sequence filename.
 
-    Example: 2vsm_r1_s0_binder_sequence.fa -> 2vsm_r1_s0
+    PREPARE_BOLTZ2_SEQUENCES outputs: {sample}_r{rank}_s{seq_num}.fa
+    The filename stem IS the design ID (no conversion needed).
+
+    Example: 2vsm_r1_s0.fa -> 2vsm_r1_s0
     """
-    base = Path(filename).stem
-    # Remove common suffixes
-    base = re.sub(r'_binder_sequence$', '', base)
-    base = re.sub(r'_sequence$', '', base)
-    base = re.sub(r'_seq$', '', base)
-    return base
+    return Path(filename).stem
 
 
 def collect_metrics_from_dirs(ipsae_dir, prodigy_dir, foldseek_dir, sequence_dir=None, ipsae_cutoffs="10_10"):
@@ -342,6 +351,38 @@ def collect_metrics_from_dirs(ipsae_dir, prodigy_dir, foldseek_dir, sequence_dir
                     print(f"  Sequence [{design_id}]: {len(sequence)} AA")
         else:
             print(f"Sequence directory not found: {sequence_dir}")
+
+    # ========================================
+    # Summary: Show ID matching status
+    # ========================================
+    print("\n" + "=" * 60)
+    print("DESIGN ID MATCHING SUMMARY")
+    print("=" * 60)
+    for design_id in sorted(metrics.keys()):
+        data = metrics[design_id]
+        has_ipsae = 'ipsae' in data
+        has_prodigy = 'binding_affinity' in data
+        has_foldseek = 'foldseek_target' in data
+        has_sequence = 'sequence' in data
+
+        status = []
+        if has_ipsae: status.append("ipSAE")
+        if has_prodigy: status.append("Prodigy")
+        if has_foldseek: status.append("Foldseek")
+        if has_sequence: status.append("Sequence")
+
+        missing = []
+        if not has_ipsae: missing.append("ipSAE")
+        if not has_prodigy: missing.append("Prodigy")
+        if not has_foldseek: missing.append("Foldseek")
+        if not has_sequence: missing.append("Sequence")
+
+        status_str = ", ".join(status) if status else "NONE"
+        missing_str = f" [MISSING: {', '.join(missing)}]" if missing else " [COMPLETE]"
+
+        print(f"  {design_id}: {status_str}{missing_str}")
+
+    print("=" * 60 + "\n")
 
     return metrics
 
@@ -684,7 +725,7 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
             <div class="metric-card">
                 <dl>
                     <dt>ipSAE</dt>
-                    <dd>Interface Predicted Structural Alignment Error. Lower is better; &lt;0.5 indicates good interfaces.</dd>
+                    <dd>Interface interaction prediction Score from Aligned Errors. Higher is better.</dd>
                 </dl>
             </div>
             <div class="metric-card">
@@ -702,7 +743,7 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
             <div class="metric-card">
                 <dl>
                     <dt>AFDB ID</dt>
-                    <dd>UniProt ID of closest AlphaFold DB match. Click to view entry.</dd>
+                    <dd>ID of closest AlphaFold DB match. Click to view entry.</dd>
                 </dl>
             </div>
         </div>
@@ -740,6 +781,9 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
         // Store current sequence for copying
         let currentSequence = '';
 
+        // Store grid API reference
+        let gridApi = null;
+
         // Custom cell renderer for sequence (collapsible)
         function sequenceCellRenderer(params) {{
             if (!params.value) return '-';
@@ -759,6 +803,16 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
                 return `<a href="${{url}}" target="_blank" class="afdb-link">${{params.value}}</a>`;
             }}
             return params.value;
+        }}
+
+        // Custom cell renderer for Foldseek target (clickable to copy)
+        function foldseekTargetCellRenderer(params) {{
+            if (!params.value) return '-';
+
+            const target = params.value;
+            const preview = target.length > 20 ? target.substring(0, 20) + '...' : target;
+
+            return `<span class="sequence-cell sequence-collapsed" onclick="showFoldseekTarget('${{params.data.design_id}}', '${{target}}')">${{preview}} <span class="expand-icon">&#x25BC;</span></span>`;
         }}
 
         // Custom cell renderer for ipSAE with color coding
@@ -785,6 +839,16 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
 
         // Column definitions
         const columnDefs = [
+            {{
+                headerName: '#',
+                valueGetter: 'node.rowIndex + 1',
+                pinned: 'left',
+                filter: false,
+                sortable: false,
+                minWidth: 60,
+                maxWidth: 70,
+                suppressSizeToFit: true
+            }},
             {{
                 headerName: 'Design ID',
                 field: 'design_id',
@@ -847,7 +911,7 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
                 filter: 'agTextColumnFilter',
                 sortable: true,
                 minWidth: 200,
-                valueFormatter: params => params.value ? params.value : '-'
+                cellRenderer: foldseekTargetCellRenderer
             }}
         ];
 
@@ -869,17 +933,17 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
         // Initialize grid
         document.addEventListener('DOMContentLoaded', function() {{
             const gridDiv = document.querySelector('#metricsGrid');
-            agGrid.createGrid(gridDiv, gridOptions);
+            gridApi = agGrid.createGrid(gridDiv, gridOptions);
 
             // Quick filter
             document.getElementById('quickFilter').addEventListener('input', function(e) {{
-                gridOptions.api.setGridOption('quickFilterText', e.target.value);
+                gridApi.setGridOption('quickFilterText', e.target.value);
             }});
         }});
 
         // Export to CSV
         function exportToCsv() {{
-            gridOptions.api.exportDataAsCsv({{
+            gridApi.exportDataAsCsv({{
                 fileName: 'protein_design_metrics.csv',
                 columnKeys: ['design_id', 'ipsae', 'binding_affinity', 'aa_length', 'sequence', 'afdb_id', 'foldseek_distance', 'foldseek_target']
             }});
@@ -887,9 +951,9 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
 
         // Reset filters
         function resetFilters() {{
-            gridOptions.api.setFilterModel(null);
+            gridApi.setFilterModel(null);
             document.getElementById('quickFilter').value = '';
-            gridOptions.api.setGridOption('quickFilterText', '');
+            gridApi.setGridOption('quickFilterText', '');
         }}
 
         // Show sequence modal
@@ -897,6 +961,14 @@ def generate_html_report(metrics, output_file, title="Protein Design Metrics Rep
             currentSequence = sequence;
             document.getElementById('modalTitle').textContent = `Sequence: ${{designId}} (${{sequence.length}} AA)`;
             document.getElementById('modalSequence').textContent = sequence;
+            document.getElementById('sequenceModal').style.display = 'block';
+        }}
+
+        // Show Foldseek target modal
+        function showFoldseekTarget(designId, target) {{
+            currentSequence = target;
+            document.getElementById('modalTitle').textContent = `Foldseek Target: ${{designId}}`;
+            document.getElementById('modalSequence').textContent = target;
             document.getElementById('sequenceModal').style.display = 'block';
         }}
 

@@ -48,8 +48,12 @@
       "target_msa": {
         "type": "string",
         "errorMessage": "Target MSA must be a valid file path to a pre-computed MSA file (e.g., 'target.a3m' or 'target_msa.fasta')"
+      },
+      "target_sequence": {
+        "type": "string",
+        "errorMessage": "Target sequence must be a valid file path to a FASTA file containing the target protein sequence"
       }
     },
-    "required": ["sample_id", "design_yaml"]
+    "required": ["sample_id", "design_yaml", "target_sequence"]
   }
 }

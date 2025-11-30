@@ -11,7 +11,7 @@ entities:
 
   # Specification of the 2VSM target structure
   - file:
-      path: 2VSM.cif
+      path: nipah_virus_Glycoprotein_competition_structure.cif
       # Use chain A
       include:
         - chain:

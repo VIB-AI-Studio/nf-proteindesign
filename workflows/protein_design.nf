@@ -14,25 +14,24 @@ include { BOLTZ2_REFOLD } from '../modules/local/boltz2_refold'
 include { IPSAE_CALCULATE } from '../modules/local/ipsae_calculate'
 include { PRODIGY_PREDICT } from '../modules/local/prodigy_predict'
 include { FOLDSEEK_SEARCH } from '../modules/local/foldseek_search'
-include { EXTRACT_BINDER_SEQUENCES } from '../modules/local/extract_binder_sequences'
 include { CONSOLIDATE_METRICS } from '../modules/local/consolidate_metrics'
 
 workflow PROTEIN_DESIGN {
 
     take:
-    ch_input         // channel: [meta, design_yaml, structure_files, target_msa]
+    ch_input         // channel: [meta, design_yaml, structure_files, target_msa, target_sequence]
     ch_cache         // channel: path to cache directory or EMPTY_CACHE placeholder
     ch_boltz2_cache  // channel: path to Boltz-2 cache directory or EMPTY_BOLTZ2_CACHE placeholder
 
     main:
-    
+
     // ========================================================================
     // Run Boltzgen on design YAMLs
     // ========================================================================
-    
-    // Prepare Boltzgen input by removing target_msa (not needed for Boltzgen)
+
+    // Prepare Boltzgen input by removing target_msa and target_sequence (not needed for Boltzgen)
     ch_boltzgen_input = ch_input
-        .map { meta, design_yaml, structure_files, target_msa ->
+        .map { meta, design_yaml, structure_files, target_msa, target_sequence ->
             [meta, design_yaml, structure_files]
         }
     
@@ -81,13 +80,17 @@ workflow PROTEIN_DESIGN {
         // ====================================================================
         // Step 3: Prepare sequences for Boltz-2 refolding
         // ====================================================================
-        // This combines:
-        // 1. Extracting target sequence from Boltzgen structure
-        // 2. Splitting ProteinMPNN FASTA into individual sequence files
+        // 1. Split ProteinMPNN FASTA into individual sequence files
+        // 2. Process target sequence FASTA (from samplesheet) to clean format
         // ====================================================================
         if (params.run_boltz2_refold) {
-            // Prepare input: combine MPNN FASTA files with Boltzgen structures
-            // Use FIRST budget design CIF for target extraction (target is same across all designs)
+            // Get target sequence FASTA from samplesheet
+            ch_target_fasta = ch_input
+                .map { meta, design_yaml, structure_files, target_msa, target_sequence ->
+                    [meta.id, target_sequence]
+                }
+
+            // Combine MPNN FASTA files with target sequence FASTA
             ch_prepare_input = PROTEINMPNN_OPTIMIZE.out.sequences
                 .flatMap { meta, fasta_files ->
                     def fasta_list = fasta_files instanceof List ? new ArrayList(fasta_files) : [fasta_files]
@@ -98,42 +101,38 @@ workflow PROTEIN_DESIGN {
                 .map { meta, fasta ->
                     [meta.parent_id, meta, fasta]
                 }
-                .combine(
-                    BOLTZGEN_RUN.out.budget_design_cifs.map { meta, cif_files ->
-                        def cif_list = cif_files instanceof List ? cif_files : [cif_files]
-                        def first_cif = cif_list.sort()[0]
-                        [meta.id, first_cif]
-                    },
-                    by: 0
-                )
-                .map { parent_id, meta, fasta, cif ->
-                    [meta, fasta, cif]
+                .combine(ch_target_fasta, by: 0)
+                .map { parent_id, meta, fasta, target_fasta ->
+                    [meta, fasta, target_fasta]
                 }
-            
-            // Run combined preparation process
+
+            // Run sequence preparation (splits MPNN sequences + processes target FASTA)
             PREPARE_BOLTZ2_SEQUENCES(ch_prepare_input)
-            
+
             // ================================================================
             // Prepare Target MSA from Samplesheet
             // ================================================================
             ch_target_msa = ch_input
-                .map { meta, design_yaml, structure_files, target_msa ->
+                .map { meta, design_yaml, structure_files, target_msa, target_sequence ->
                     def msa_file = target_msa ?: file('NO_MSA')
                     [meta.id, msa_file]
                 }
-            
+
             // ================================================================
             // Create channel for Boltz-2 refolding
             // ================================================================
+            // Sequence files are now named {meta.id}_s{idx}.fa (e.g., 2vsm_r1_s0.fa)
+            // The baseName IS the design ID, so we use it directly
             ch_boltz2_input = PREPARE_BOLTZ2_SEQUENCES.out.sequences
                 .flatMap { meta, fasta_files ->
                     def fasta_list = fasta_files instanceof List ? new ArrayList(fasta_files) : [fasta_files]
                     fasta_list.collect { fasta_file ->
-                        def seq_num = fasta_file.baseName.replaceAll(/.*_seq_(\d+)$/, '$1')
+                        // Extract seq_num from filename (e.g., 2vsm_r1_s0 -> 0)
+                        def seq_num = fasta_file.baseName.replaceAll(/.*_s(\d+)$/, '$1')
 
-                        // Simplified naming: {sample}_r{rank}_s{seq}
+                        // The baseName is already the design ID (e.g., 2vsm_r1_s0)
                         def seq_meta = [
-                            id: "${meta.id}_s${seq_num}",
+                            id: fasta_file.baseName,
                             parent_id: meta.parent_id,
                             rank_num: meta.rank_num,
                             seq_num: seq_num,
@@ -143,11 +142,11 @@ workflow PROTEIN_DESIGN {
                         [seq_meta, fasta_file]
                     }
                 }
-                .map { meta, fasta -> 
+                .map { meta, fasta ->
                     [meta.mpnn_parent_id, meta, fasta]
                 }
                 .combine(
-                    PREPARE_BOLTZ2_SEQUENCES.out.target_sequence.map { meta, seq -> 
+                    PREPARE_BOLTZ2_SEQUENCES.out.target_sequence.map { meta, seq ->
                         [meta.id, seq]
                     },
                     by: 0
@@ -159,7 +158,7 @@ workflow PROTEIN_DESIGN {
                 .map { parent_id, meta, fasta, target_seq, target_msa ->
                     [meta, fasta, target_seq, target_msa]
                 }
-            
+
             // Run Boltz-2 structure prediction with target MSA
             // NOTE: Boltz-2 will automatically add missing MSA info to binder
             // NOTE: Boltz-2 outputs NPZ files natively - no conversion needed!
@@ -358,33 +357,16 @@ workflow PROTEIN_DESIGN {
             : Channel.value(file('NO_FOLDSEEK_FILES'))
 
         // ====================================================================
-        // Extract binder sequences from Boltz-2 structures for the report
+        // Collect binder sequences from ProteinMPNN for the report
         // ====================================================================
+        // Use sequences from PREPARE_BOLTZ2_SEQUENCES (the actual designed sequences)
+        // rather than extracting from structures
         if (params.run_proteinmpnn && params.run_boltz2_refold) {
-            // Extract binder sequences from the best model (model_0) structures
-            ch_sequence_input = BOLTZ2_REFOLD.out.structures
-                .flatMap { meta, cif_files ->
-                    def cif_list = cif_files instanceof List ? new ArrayList(cif_files) : [cif_files]
-                    // Filter to only model_0 (best model)
-                    cif_list = cif_list.findAll { it.name.endsWith('model_0.cif') }
-
-                    cif_list.collect { cif_file ->
-                        def seq_meta = [
-                            id: meta.id,
-                            parent_id: meta.parent_id,
-                            rank_num: meta.rank_num,
-                            seq_num: meta.seq_num
-                        ]
-                        [seq_meta, cif_file]
-                    }
+            ch_sequence_files = PREPARE_BOLTZ2_SEQUENCES.out.sequences
+                .flatMap { meta, fasta_files ->
+                    def fasta_list = fasta_files instanceof List ? fasta_files : [fasta_files]
+                    fasta_list.collect { fasta_file -> fasta_file }
                 }
-
-            // Extract binder sequences
-            EXTRACT_BINDER_SEQUENCES(ch_sequence_input)
-
-            // Collect sequence files for consolidation
-            ch_sequence_files = EXTRACT_BINDER_SEQUENCES.out.sequence
-                .map { meta, file -> file }
                 .collect()
                 .ifEmpty { file('NO_SEQUENCE_FILES') }
         } else {
@@ -420,9 +402,6 @@ workflow PROTEIN_DESIGN {
     // Optional analysis outputs (will be empty if not run)
     foldseek_results = (params.run_foldseek && params.run_proteinmpnn && params.run_boltz2_refold) ? FOLDSEEK_SEARCH.out.results : Channel.empty()
     foldseek_summary = (params.run_foldseek && params.run_proteinmpnn && params.run_boltz2_refold) ? FOLDSEEK_SEARCH.out.summary : Channel.empty()
-
-    // Binder sequences (will be empty if not run)
-    binder_sequences = (params.run_consolidation && params.run_proteinmpnn && params.run_boltz2_refold) ? EXTRACT_BINDER_SEQUENCES.out.sequence : Channel.empty()
 
     // Consolidation outputs (will be empty if not run)
     metrics_summary = params.run_consolidation ? CONSOLIDATE_METRICS.out.summary_csv : Channel.empty()

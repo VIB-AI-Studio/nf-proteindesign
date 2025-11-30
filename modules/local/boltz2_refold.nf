@@ -42,7 +42,7 @@ process BOLTZ2_REFOLD {
     def use_msa = params.boltz2_use_msa ? '--use_msa_server' : ''
     def cache_opt = cache_dir.name != 'EMPTY_BOLTZ2_CACHE' ? "--cache boltz2_cache" : ''
     def num_recycling = params.boltz2_num_recycling ?: 3
-    def num_diffusion = params.boltz2_num_diffusion ?: 200
+    def num_diffusion = params.boltz2_num_diffusion ?: 5
     def has_target_msa = target_msa.name != 'NO_MSA'
     """
     #!/bin/bash

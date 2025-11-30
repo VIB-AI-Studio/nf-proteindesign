@@ -94,7 +94,7 @@ def main():
                     'msa': 'empty'
                 }
             }
-            
+
             target_entry = {
                 'protein': {
                     'id': 'B',
@@ -114,19 +114,24 @@ def main():
                 boltz2_input['properties'] = [
                     {'affinity': {'binder': 'A'}}
                 ]
-            
+
             # Write YAML file
-            # Use a unique suffix based on the loop index to avoid overwriting
-            yaml_file = f"{args.output_dir}/{output_base}_seq_{yaml_count}.yaml"
+            # meta_id is already the full design ID (e.g., 2vsm_r1_s0)
+            # Only add suffix if there are multiple sequences in the file
+            if len(sequences_to_process) == 1:
+                yaml_file = f"{args.output_dir}/{output_base}.yaml"
+            else:
+                yaml_file = f"{args.output_dir}/{output_base}_seq_{idx}.yaml"
+
             with open(yaml_file, 'w') as yf:
                 yaml.dump(boltz2_input, yf, default_flow_style=False)
-            
+
             print(f"  Created YAML input: {yaml_file}")
             print(f"    Binder length: {len(binder_seq)}")
             print(f"    Target length: {len(target_seq)}")
             print(f"    Target MSA: {'Yes' if has_target_msa else 'No (will use sequence only)'}")
             print(f"    Binder MSA: Inferred automatically by Boltz-2")
-            
+
             yaml_count += 1
 
     print(f"\nTotal YAML files created: {yaml_count}")

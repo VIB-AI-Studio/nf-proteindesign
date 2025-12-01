@@ -21,32 +21,40 @@ process CONSOLIDATE_METRICS {
     script:
     def pae_cutoff = params.ipsae_pae_cutoff ?: 10
     def dist_cutoff = params.ipsae_dist_cutoff ?: 10
-    def seq_dir_flag = sequence_files.name != 'NO_SEQUENCE_FILES' ? '--sequence_dir "sequences"' : ''
 
     """
     # Make script executable
     chmod +x ${consolidate_script}
 
+    # Create directories if they don't exist (handles empty input lists)
+    mkdir -p ipsae prodigy foldseek sequences
+
     # Debug: List staged files in subdirectories
     echo "=== Staged ipSAE files ==="
-    ls -la ipsae/ 2>/dev/null || echo "No ipsae directory"
+    ls -la ipsae/ 2>/dev/null || echo "No ipsae files"
     echo ""
     echo "=== Staged Prodigy files ==="
-    ls -la prodigy/ 2>/dev/null || echo "No prodigy directory"
+    ls -la prodigy/ 2>/dev/null || echo "No prodigy files"
     echo ""
     echo "=== Staged Foldseek files ==="
-    ls -la foldseek/ 2>/dev/null || echo "No foldseek directory"
+    ls -la foldseek/ 2>/dev/null || echo "No foldseek files"
     echo ""
     echo "=== Staged Sequence files ==="
-    ls -la sequences/ 2>/dev/null || echo "No sequences directory"
+    ls -la sequences/ 2>/dev/null || echo "No sequence files"
     echo ""
+
+    # Build command with optional sequence directory (only if files exist)
+    SEQ_FLAG=""
+    if [ -n "\$(ls -A sequences/ 2>/dev/null)" ]; then
+        SEQ_FLAG="--sequence_dir sequences"
+    fi
 
     # Run consolidation script with staged subdirectories
     python ${consolidate_script} \\
         --ipsae_dir "ipsae" \\
         --prodigy_dir "prodigy" \\
         --foldseek_dir "foldseek" \\
-        ${seq_dir_flag} \\
+        \${SEQ_FLAG} \\
         --output_html design_metrics_report.html \\
         --output_csv design_metrics_summary.csv \\
         --title "Protein Design Metrics Report" \\

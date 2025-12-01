@@ -198,6 +198,23 @@ process BOLTZ2_REFOLD {
     echo "Affinity predictions: \${AFFINITY_COUNT}"
     echo "Output directory: ${meta.id}_boltz2_output"
     echo "============================================"
+
+    # Fail if no structures were produced (critical for downstream processes)
+    if [ "\${CIF_COUNT}" -eq 0 ]; then
+        echo ""
+        echo "ERROR: No CIF structures were produced by Boltz-2!"
+        echo "This will cause downstream processes (IPSAE, PRODIGY) to have no input."
+        echo ""
+        echo "Debug info - checking boltz2_results directory structure:"
+        find boltz2_results -type f 2>/dev/null | head -50 || echo "No boltz2_results directory found"
+        exit 1
+    fi
+
+    # Warn if no PAE files (needed for IPSAE)
+    if [ "\${NPZ_COUNT}" -eq 0 ]; then
+        echo ""
+        echo "WARNING: No PAE NPZ files were produced. IPSAE will not be able to run."
+    fi
     
     # Create summary file
     cat > ${meta.id}_boltz2_output/prediction_summary.txt <<SUMMARY

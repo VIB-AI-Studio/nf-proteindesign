@@ -141,9 +141,10 @@ workflow PROTEIN_DESIGN {
             // ================================================================
             // Prepare Target MSA from Samplesheet
             // ================================================================
+            // Use actual placeholder files in assets/ for k8s compatibility (avoids staging non-existent files)
             ch_target_msa = ch_input
                 .map { meta, design_yaml, structure_files, target_msa, target_sequence, target_template, boltzgen_output_dir ->
-                    def msa_file = target_msa ?: file('NO_MSA')
+                    def msa_file = target_msa ?: file("${projectDir}/assets/NO_MSA", checkIfExists: true)
                     [meta.id, msa_file]
                 }
 
@@ -152,7 +153,7 @@ workflow PROTEIN_DESIGN {
             // ================================================================
             ch_target_template = ch_input
                 .map { meta, design_yaml, structure_files, target_msa, target_sequence, target_template, boltzgen_output_dir ->
-                    def template_file = target_template ?: file('NO_TEMPLATE')
+                    def template_file = target_template ?: file("${projectDir}/assets/NO_TEMPLATE", checkIfExists: true)
                     [meta.id, template_file]
                 }
 
@@ -398,30 +399,31 @@ workflow PROTEIN_DESIGN {
 
         // Collect output files from each analysis process
         // These will be staged into the consolidation task's work directory
+        // Use empty lists [] instead of non-existent placeholder files for k8s compatibility
 
         // ipSAE scores (the .txt files, not byres)
         ch_ipsae_files = (params.run_ipsae && params.run_proteinmpnn && params.run_boltz2_refold)
             ? IPSAE_CALCULATE.out.scores
                 .map { meta, file -> file }
                 .collect()
-                .ifEmpty { file('NO_IPSAE_FILES') }
-            : Channel.value(file('NO_IPSAE_FILES'))
+                .ifEmpty { [] }
+            : Channel.value([])
 
         // Prodigy results (.txt files)
         ch_prodigy_files = (params.run_prodigy && params.run_proteinmpnn && params.run_boltz2_refold)
             ? PRODIGY_PREDICT.out.results
                 .map { meta, file -> file }
                 .collect()
-                .ifEmpty { file('NO_PRODIGY_FILES') }
-            : Channel.value(file('NO_PRODIGY_FILES'))
+                .ifEmpty { [] }
+            : Channel.value([])
 
         // Foldseek summaries (.tsv files)
         ch_foldseek_files = (params.run_foldseek && params.run_proteinmpnn && params.run_boltz2_refold)
             ? FOLDSEEK_SEARCH.out.summary
                 .map { meta, file -> file }
                 .collect()
-                .ifEmpty { file('NO_FOLDSEEK_FILES') }
-            : Channel.value(file('NO_FOLDSEEK_FILES'))
+                .ifEmpty { [] }
+            : Channel.value([])
 
         // ====================================================================
         // Collect binder sequences from ProteinMPNN for the report
@@ -435,9 +437,9 @@ workflow PROTEIN_DESIGN {
                     fasta_list.collect { fasta_file -> fasta_file }
                 }
                 .collect()
-                .ifEmpty { file('NO_SEQUENCE_FILES') }
+                .ifEmpty { [] }
         } else {
-            ch_sequence_files = Channel.value(file('NO_SEQUENCE_FILES'))
+            ch_sequence_files = Channel.value([])
         }
 
         // Run consolidation with staged files

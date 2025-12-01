@@ -242,10 +242,11 @@ SUMMARY
     stub:
     """
     mkdir -p ${meta.id}_boltz2_output
-    touch ${meta.id}_boltz2_output/placeholder.cif
-    touch ${meta.id}_boltz2_output/placeholder_confidence.json
-    touch ${meta.id}_boltz2_output/placeholder_pae.npz
-    touch ${meta.id}_boltz2_output/placeholder_affinity.json
+    # Create stub files with realistic names that match downstream filtering patterns
+    touch ${meta.id}_boltz2_output/${meta.id}_model_0.cif
+    touch ${meta.id}_boltz2_output/${meta.id}_model_0_confidence.json
+    touch ${meta.id}_boltz2_output/pae_${meta.id}_model_0.npz
+    touch ${meta.id}_boltz2_output/${meta.id}_model_0_affinity.json
     touch versions.yml
     """
 }

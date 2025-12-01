@@ -146,7 +146,9 @@ process CONVERT_CIF_TO_PDB {
     stub:
     """
     mkdir -p ${meta.id}_pdb_structures
-    touch ${meta.id}_pdb_structures/placeholder.pdb
+    # Create stub files with realistic names that match downstream rank extraction patterns
+    touch ${meta.id}_pdb_structures/rank1_${meta.id}_design.pdb
+    touch ${meta.id}_pdb_structures/rank2_${meta.id}_design.pdb
     touch versions.yml
     """
 }

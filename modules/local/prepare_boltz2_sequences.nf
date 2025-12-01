@@ -120,7 +120,8 @@ process PREPARE_BOLTZ2_SEQUENCES {
     """
     mkdir -p sequences
     echo "MOCKSEQUENCE" > ${meta.id}_target_sequence.txt
-    touch sequences/placeholder_seq_0.fa
+    # Create stub files with unique names matching the expected pattern
+    touch sequences/${meta.id}_s0.fa
     touch versions.yml
     """
 }

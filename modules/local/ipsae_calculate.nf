@@ -45,9 +45,10 @@ process IPSAE_CALCULATE {
     def pae_cutoff = params.ipsae_pae_cutoff ?: 10
     def dist_cutoff = params.ipsae_dist_cutoff ?: 10
     """
-    touch stub_output_${pae_cutoff}_${dist_cutoff}.txt
-    touch stub_output_${pae_cutoff}_${dist_cutoff}_byres.txt
-    touch stub_output.pml
+    # Create stub files with unique names using meta.id
+    touch ${meta.id}_${pae_cutoff}_${dist_cutoff}.txt
+    touch ${meta.id}_${pae_cutoff}_${dist_cutoff}_byres.txt
+    touch ${meta.id}.pml
     touch versions.yml
     """
 }

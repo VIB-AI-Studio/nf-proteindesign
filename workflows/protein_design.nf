@@ -55,14 +55,14 @@ workflow PROTEIN_DESIGN {
     
     // Extract budget_design_cifs from both sources for downstream processing
     ch_budget_cifs_new = BOLTZGEN_RUN.out.budget_design_cifs
-    
+
+    // For precomputed results, extract CIF files from the precomputed directory
     ch_budget_cifs_precomputed = ch_branched.with_precomputed
         .map { meta, boltzgen_dir ->
-            // Extract budget design CIF files from pre-computed directory
             def budget_cifs = file("${boltzgen_dir}/final_ranked_designs/final_*_designs/*.cif")
             [meta, budget_cifs]
         }
-    
+
     ch_budget_design_cifs = ch_budget_cifs_new
         .mix(ch_budget_cifs_precomputed)
     

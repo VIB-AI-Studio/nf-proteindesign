@@ -82,10 +82,12 @@ process BOLTZGEN_RUN {
 
     stub:
     """
-    mkdir -p ${meta.id}_output/final_ranked_designs
+    mkdir -p ${meta.id}_output/final_ranked_designs/final_${meta.budget}_designs
     mkdir -p ${meta.id}_output/intermediate_designs
     mkdir -p ${meta.id}_output/intermediate_designs_inverse_folded
-    touch ${meta.id}_output/final_ranked_designs/placeholder.cif
+    # Create stub files with realistic names that match downstream patterns
+    touch ${meta.id}_output/final_ranked_designs/final_${meta.budget}_designs/rank1_${meta.id}_design.cif
+    touch ${meta.id}_output/final_ranked_designs/final_${meta.budget}_designs/rank2_${meta.id}_design.cif
     touch versions.yml
     """
 }

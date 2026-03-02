@@ -25,12 +25,13 @@ process FOLDSEEK_SEARCH {
     def sensitivity = params.foldseek_sensitivity ?: 9.5
     def coverage = params.foldseek_coverage ?: 0.0
     def alignment_type = params.foldseek_alignment_type ?: 2
+    def database_name = params.foldseek_database_name ?: 'afdb'
     def threads = task.cpus
 
     """
     /usr/local/bin/foldseek_avx2 easy-search \\
         ${structure} \\
-        ${database_dir}/afdb \\
+        ${database_dir}/${database_name} \\
         ${meta.id}_foldseek_results.tsv \\
         tmp_foldseek \\
         -e ${evalue} \\

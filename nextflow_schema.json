@@ -236,9 +236,16 @@
                 },
                 "foldseek_database": {
                     "type": "string",
-                    "description": "Path to Foldseek database (required if run_foldseek is true).",
-                    "help_text": "Path to a pre-built Foldseek database. Common databases include AlphaFold, Swiss-Model, PDB, or custom databases created with 'foldseek createdb'. Use AlphaFold/UniProt50 for comprehensive structural searches.",
+                    "description": "Path to Foldseek database directory (required if run_foldseek is true).",
+                    "help_text": "Path to directory containing Foldseek database files. Common databases include AlphaFold, Swiss-Model, PDB, or custom databases created with 'foldseek createdb'. Use AlphaFold/UniProt50 for comprehensive structural searches.",
                     "fa_icon": "fas fa-database"
+                },
+                "foldseek_database_name": {
+                    "type": "string",
+                    "default": "afdb",
+                    "description": "Name of the Foldseek database within the directory.",
+                    "help_text": "The database name (without extension) to use within the foldseek_database directory. Common values: 'afdb' (AlphaFold), 'swissprot' (Swiss-Prot), 'pdb' (Protein Data Bank), or your custom database name.",
+                    "fa_icon": "fas fa-tag"
                 },
                 "foldseek_evalue": {
                     "type": "number",

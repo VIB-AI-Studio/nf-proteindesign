@@ -215,10 +215,17 @@ Enable Foldseek structural similarity search for budget designs and Boltz-2 stru
 
 ### `--foldseek_database`
 
-Path to Foldseek database (required if run_foldseek is true).
+Path to Foldseek database directory (required if run_foldseek is true).
 
 - **Type**: `string`
 - **Default**: `"null"`
+
+### `--foldseek_database_name`
+
+Name of the Foldseek database within the directory.
+
+- **Type**: `string`
+- **Default**: `"afdb"`
 
 ### `--foldseek_evalue`
 
@@ -383,7 +390,8 @@ Display version and exit.
 | `--run_prodigy` | `boolean` | `false` | Enable PRODIGY binding affinity prediction on f... |
 | `--prodigy_selection` | `string` | `"null"` | Chain selection for PRODIGY (e |
 | `--run_foldseek` | `boolean` | `false` | Enable Foldseek structural similarity search fo... |
-| `--foldseek_database` | `string` | `"null"` | Path to Foldseek database (required if run_fold... |
+| `--foldseek_database` | `string` | `"null"` | Path to Foldseek database directory (required i... |
+| `--foldseek_database_name` | `string` | `"afdb"` | Name of the Foldseek database within the directory |
 | `--foldseek_evalue` | `number` | `0.001` | E-value threshold for reporting matches (lower ... |
 | `--foldseek_max_seqs` | `integer` | `100` | Maximum number of target sequences to report pe... |
 | `--foldseek_sensitivity` | `number` | `9.5` | Search sensitivity (1 |

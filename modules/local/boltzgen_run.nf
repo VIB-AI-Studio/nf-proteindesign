@@ -12,7 +12,7 @@ process BOLTZGEN_RUN {
 
     input:
     tuple val(meta), path(design_yaml), path(structure_files)
-    path cache_dir, stageAs: 'input_cache/*'
+    path cache_dir, stageAs: 'input_cache'
 
     output:
     tuple val(meta), path("${meta.id}_output"), emit: results

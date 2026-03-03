@@ -27,7 +27,8 @@ nextflow run seqeralabs/nf-proteindesign \
     --run_ipsae \
     --run_prodigy \
     --run_foldseek \
-    --foldseek_database /path/to/afdb \
+    --foldseek_database /path/to/database_dir \
+    --foldseek_database_name afdb \
     --run_consolidation \
     --outdir results
 ```
@@ -196,7 +197,7 @@ Consolidation works with any subset of analysis modules:
 --run_ipsae --run_prodigy --run_consolidation
 
 # Only Foldseek
---run_foldseek --foldseek_database /path/to/afdb --run_consolidation
+--run_foldseek --foldseek_database /path/to/database_dir --foldseek_database_name afdb --run_consolidation
 
 # All modules
 --run_proteinmpnn --run_protenix_refold --run_ipsae --run_prodigy --run_foldseek --run_consolidation

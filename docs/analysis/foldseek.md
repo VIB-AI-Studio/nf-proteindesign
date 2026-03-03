@@ -23,7 +23,8 @@ nextflow run seqeralabs/nf-proteindesign \
     -profile docker \
     --input samplesheet.csv \
     --run_foldseek \
-    --foldseek_database /path/to/afdb \
+    --foldseek_database /path/to/database_dir \
+    --foldseek_database_name afdb \
     --outdir results
 ```
 
@@ -35,6 +36,7 @@ nextflow run seqeralabs/nf-proteindesign \
 |-----------|-------------|
 | `--run_foldseek` | Enable Foldseek structural search (default: `false`) |
 | `--foldseek_database` | Path to Foldseek database directory (required when Foldseek is enabled) |
+| `--foldseek_database_name` | Name of the database within the directory (default: `afdb`) |
 
 ### Search Parameters
 
@@ -57,8 +59,9 @@ Download and prepare the AlphaFold database:
 wget https://foldseek.steineggerlab.workers.dev/afdb-swissprot.tar.gz
 tar xzf afdb-swissprot.tar.gz
 
-# Use in pipeline
---foldseek_database /path/to/afdb-swissprot
+# Use in pipeline - database files will be in the extracted directory
+--foldseek_database /path/to/afdb-swissprot \
+--foldseek_database_name afdb
 ```
 
 ### Swiss-Model Database
@@ -70,7 +73,9 @@ Alternatively, use Swiss-Model structures:
 wget https://foldseek.steineggerlab.workers.dev/swissprot.tar.gz
 tar xzf swissprot.tar.gz
 
---foldseek_database /path/to/swissprot
+# Use in pipeline
+--foldseek_database /path/to/swissprot \
+--foldseek_database_name swissprot
 ```
 
 ### Custom Database
@@ -81,8 +86,9 @@ Create a custom database from your PDB files:
 # Create database from directory of PDB/CIF files
 foldseek createdb /path/to/structures/ mydb
 
-# Use in pipeline
---foldseek_database /path/to/mydb
+# Use in pipeline - specify your custom database name
+--foldseek_database /path/to/ \
+--foldseek_database_name mydb
 ```
 
 ## What Structures Are Searched?

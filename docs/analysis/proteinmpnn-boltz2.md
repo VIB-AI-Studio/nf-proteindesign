@@ -229,7 +229,8 @@ nextflow run seqeralabs/nf-proteindesign \
     --run_ipsae \
     --run_prodigy \
     --run_foldseek \
-    --foldseek_database /path/to/afdb \
+    --foldseek_database /path/to/database_dir \
+    --foldseek_database_name afdb \
     --run_consolidation \
     --outdir results
 ```
@@ -369,7 +370,7 @@ Predicts binding affinity for both structure types:
 Searches for homologs of both Boltzgen and Boltz-2 designs:
 
 ```bash
---run_foldseek --foldseek_database /path/to/afdb
+--run_foldseek --foldseek_database /path/to/database_dir --foldseek_database_name afdb
 ```
 
 ## References

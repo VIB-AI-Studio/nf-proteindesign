@@ -102,7 +102,8 @@ nextflow run seqeralabs/nf-proteindesign \
     --run_ipsae \
     --run_prodigy \
     --run_foldseek \
-    --foldseek_database /path/to/afdb \
+    --foldseek_database /path/to/database_dir \
+    --foldseek_database_name afdb \
     --run_consolidation
 ```
 

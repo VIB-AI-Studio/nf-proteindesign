@@ -155,7 +155,10 @@ nextflow log
 
 1. **Container timeout**: Increase `--apptainer.pullTimeout` to `120m` or higher for slow networks
 2. **GPU not detected**: Ensure `--nv` flag and GPU drivers are properly configured  
-3. **Out of space**: Set `--cache_dir` to location with sufficient storage (~12GB for model weights)
+3. **Out of space during container pull**: 
+   - Set `--cache_dir` to location with sufficient storage (~12GB for model weights)
+   - Or redirect Apptainer cache: `export APPTAINER_CACHEDIR=/path/to/large/storage`
+   - Default cache location: `~/.apptainer/cache/` (often limited space)
 4. **SLURM job failures**: Check queue availability with `sinfo` and `squeue`
 5. **Boltz-2 affinity errors**: This is expected - affinity prediction only works for small molecule ligands, not protein-protein interactions. The test profiles disable this by default.
 6. **Missing MSA errors**: For peptides/designs without MSA files, ensure `boltz2_use_msa = true` in your configuration

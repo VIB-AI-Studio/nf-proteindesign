@@ -46,7 +46,9 @@ nextflow run main.nf -profile test_design_protein,apptainer,slurm_flexible \
 # Monitor jobs with: squeue -u $(whoami)
 ```
 
-### 🔧 Container Timeout Configuration
+### 🔧 Container & Configuration Notes
+
+#### Container Timeouts
 Large containers may require extended pull timeouts:
 ```bash
 # For Singularity/Apptainer (increase as needed)
@@ -54,6 +56,13 @@ nextflow run main.nf -profile test_design_protein,apptainer \
   --apptainer.pullTimeout '120m' \
   --cache_dir /path/to/cache
 ```
+
+#### Boltz-2 Affinity Prediction Limitations
+**Important**: Boltz-2's affinity prediction only works with small molecule ligands, NOT protein-protein interactions. The test profiles have been configured to disable affinity prediction by default since protein binders, nanobodies, and peptides are all treated as proteins, not ligands by Boltz-2.
+
+- ✅ **Structure prediction**: Works for all design types
+- ❌ **Affinity prediction**: Only for small molecules (disabled in test profiles)  
+- ✅ **Alternative**: Use PRODIGY for protein-protein binding affinity predictions
 
 ### 🔬 Running with Your Own Data
 ```bash
@@ -75,7 +84,7 @@ my_design,design.yaml,protein-anything,10,5
 ### Core Pipeline Parameters
 - `--input`: Path to samplesheet CSV
 - `--outdir`: Output directory (default: `./results`)
-- `--cache_dir`: Cache directory for model weights (recommended for shared filesystems)
+- `--cache_dir`: Cache directory for model weights (recommended: shared filesystem location, ~12GB total)
 
 ### Analysis Module Controls
 - `--run_proteinmpnn`: Enable ProteinMPNN sequence optimization (default: `true`)
@@ -84,8 +93,14 @@ my_design,design.yaml,protein-anything,10,5
 - `--run_prodigy`: Enable PRODIGY affinity prediction (default: `true`)
 - `--run_consolidation`: Generate consolidated metrics report (default: `true`)
 
+### Boltz-2 Specific Parameters
+- `--boltz2_predict_affinity`: Enable affinity prediction (default: `true`, but disabled in test profiles due to ligand limitations)
+- `--boltz2_use_msa`: Use MSA server for designs without MSA files (default: `false`, enabled for peptides)
+- `--boltz2_num_recycling`: Number of recycling steps (default: `3`)
+- `--boltz2_num_diffusion`: Number of diffusion samples (default: `200`)
+
 ### Container & HPC Parameters  
-- `--apptainer.pullTimeout`: Container pull timeout (default: `20m`, increase for slow networks)
+- `--apptainer.pullTimeout`: Container pull timeout (default: `20m`, recommend `120m+` for slow networks)
 - `--singularity.pullTimeout`: Alternative for Singularity (default: `20m`)
 
 See `nextflow.config` for all available parameters.
@@ -136,11 +151,14 @@ nextflow log
 
 ## 🐛 Troubleshooting
 
-### Common Issues
-1. **Container timeout**: Increase `--apptainer.pullTimeout` to `120m` or higher
+### Common Issues & Solutions
+
+1. **Container timeout**: Increase `--apptainer.pullTimeout` to `120m` or higher for slow networks
 2. **GPU not detected**: Ensure `--nv` flag and GPU drivers are properly configured  
-3. **Out of space**: Set `--cache_dir` to location with sufficient storage
+3. **Out of space**: Set `--cache_dir` to location with sufficient storage (~12GB for model weights)
 4. **SLURM job failures**: Check queue availability with `sinfo` and `squeue`
+5. **Boltz-2 affinity errors**: This is expected - affinity prediction only works for small molecule ligands, not protein-protein interactions. The test profiles disable this by default.
+6. **Missing MSA errors**: For peptides/designs without MSA files, ensure `boltz2_use_msa = true` in your configuration
 
 ### Debug Commands
 ```bash
@@ -155,7 +173,16 @@ apptainer exec --nv [CONTAINER] nvidia-smi
 
 # Check Nextflow run history
 nextflow log -f name,status,duration,hash
+
+# Resume from specific failed run
+nextflow run main.nf -profile [PROFILES] -resume [HASH]
 ```
+
+### Test Profile Configuration Issues
+If you encounter issues with the test profiles, the following parameters are pre-configured:
+- `boltz2_predict_affinity = false` - Prevents ligand classification errors
+- `boltz2_use_msa = true` - Enables MSA server for designs without MSA files (peptides)
+- Appropriate resource allocation for different compute environments
 
 ## 📁 Output
 Results are organized by sample in the output directory:
